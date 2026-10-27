@@ -1,0 +1,54 @@
+# Render deploy blueprint for the dmesh coordinator.
+# Secrets are declared sync:false — set them in the Render dashboard or via
+# the Render API; they are never committed. Non-secret testnet defaults are
+# inlined. The service is non-custodial: no wallet balance is held, the
+# ADMIN_STELLAR_SECRET only performs contract administration calls.
+services:
+  - type: web
+    name: dmesh-coordinator
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: main
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    numInstances: 1
+    envVars:
+      - key: APP_ADDR
+        value: ":8080"
+      - key: HORIZON_URL
+        value: "https://horizon-testnet.stellar.org"
+      - key: SOROBAN_RPC_URL
+        value: "https://soroban-testnet.stellar.org"
+      - key: NETWORK_PASSPHRASE
+        value: "Test SDF Network ; September 2015"
+      - key: DEV_OTP_CODES
+        value: "false"
+      - key: TOKEN_TTL_HOURS
+        value: "720"
+      - key: SESSION_TTL_MINUTES
+        value: "60"
+      - key: HEARTBEAT_TIMEOUT_MINUTES
+        value: "5"
+      # Secrets (provisioned out-of-band, never committed)
+      - key: SETTLEMENT_CONTRACT_ID
+        sync: false
+      - key: XLM_SAC_CONTRACT_ID
+        sync: false
+      - key: ADMIN_STELLAR_SECRET
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_API_TOKEN
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_ENDPOINT
+        sync: false

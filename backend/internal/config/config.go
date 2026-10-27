@@ -63,8 +63,14 @@ func Load() *Config {
 			admins[e] = true
 		}
 	}
+	// Bind address: explicit APP_ADDR wins; otherwise honor the platform
+	// injected PORT (Render sets $PORT), defaulting to 8080 locally.
+	addr := os.Getenv("APP_ADDR")
+	if addr == "" {
+		addr = ":" + env("PORT", "8080")
+	}
 	return &Config{
-		Addr:                 env("APP_ADDR", ":8080"),
+		Addr:                 addr,
 		DBPath:               env("DB_PATH", "data/dmesh.db"),
 		JWTSecret:            []byte(env("JWT_SECRET", "change-me-in-production-32-bytes-minimum-secret")),
 		HorizonURL:           env("HORIZON_URL", "https://horizon-testnet.stellar.org"),
