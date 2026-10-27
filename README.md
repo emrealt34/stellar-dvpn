@@ -1,6 +1,24 @@
 # dmesh
 
+<p align="left">
+  <img src="site/logo.svg" width="72" height="72" alt="dmesh logo">
+</p>
+
 **Trustless, non-custodial decentralized VPN and pay-per-use agent API, settled on Stellar Soroban.**
+
+## Live deployments
+
+| Component | URL |
+| --- | --- |
+| Website / download page (GitHub Pages) | <https://emrealt34.github.io/stellar-dvpn/> |
+| Coordinator API (Render, testnet) | <https://dmesh-coordinator.onrender.com> |
+| Source repository | <https://github.com/emrealt34/stellar-dvpn> |
+| Releases / prebuilt binaries | <https://github.com/emrealt34/stellar-dvpn/releases> |
+
+Live API endpoints: [`/api/v1/health`](https://dmesh-coordinator.onrender.com/api/v1/health),
+[`/api/v1/public/pricing`](https://dmesh-coordinator.onrender.com/api/v1/public/pricing),
+[`/api/v1/public/stats`](https://dmesh-coordinator.onrender.com/api/v1/public/stats).
+Pricing is served live from the Soroban contract (`"source": "contract"`).
 
 dmesh lets anyone run a mesh exit node and anyone consume residential or
 datacenter bandwidth / HTTP egress, paying only for the bytes they actually
