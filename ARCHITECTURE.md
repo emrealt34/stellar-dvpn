@@ -35,8 +35,8 @@
       | 2. open_session(node,token,|                              |
       |    tier, nonce, ttl)       |                              |
       |--------------------------->|                              |
-      |        (traffic flows over WireGuard, both sides keep     |
-      |         hash-chained ed25519-signed counter statements)   |
+      |        (traffic flows over the P2P tunnel, both sides     |
+      |         keep ed25519-signed, monotonic counter records)   |
       | 3. propose_settlement(id,  |                              |
       |    up, down)  client auth  |                              |
       |--------------------------->|                              |
@@ -47,6 +47,22 @@
       |  transfer_from client 20%  |------> protocol admin        |
       |                            |  session marked settled      |
 ```
+
+### Spend hold (escrow) option
+
+`open_session_with_hold` pulls a capped amount into programmatic escrow at
+session start instead of relying solely on a later allowance draw:
+
+- the client can never pay above the hold; the node holds a guaranteed claim;
+- `confirm_settlement` pays the 80/20 split from escrow and refunds the
+  remainder, all in one transaction;
+- `cancel_session` refunds the full hold immediately;
+- after TTL either party calls `reclaim_hold`: committed (proposed) usage is
+  paid and the remainder refunded, or the full hold returns to the client when
+  nothing was proposed. A `released` flag makes double payout impossible.
+
+The zero-hold `open_session` allowance path remains supported; 14 contract
+tests cover both, including lock/settle/refund and post-expiry reclaim.
 
 - **Two-step settlement** (propose/confirm) means each party signs its own
   transaction; no off-line signature collection is needed.
@@ -117,9 +133,20 @@ liveness/heartbeat storage.
 ### Hardened agent proxy
 
 `/api/v1/agent/fetch` and `/api/v1/agent/connect` are SSRF-safe (no loopback,
-RFC1918, link-local/metadata, multicast or unspecified destinations), cap
-concurrent tunnels, close idle connections, bound request bodies and return
-structured JSON errors. See [`docs/AGENT_API.md`](docs/AGENT_API.md) and
+RFC1918, link-local/metadata, multicast or unspecified destinations), enforce
+an exit-policy port denylist, cap concurrent tunnels, close idle connections,
+bound request bodies and return structured JSON errors. See
+[`docs/AGENT_API.md`](docs/AGENT_API.md) and
 [`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md).
+
+### Peer-to-peer data plane
+
+`internal/tunnel` keeps user traffic off the coordinator. The node runs
+`dmesh tunnel-listen`; the client runs `dmesh tunnel`, which exposes a local
+HTTP CONNECT proxy. Every tunnel starts with a Stellar-signed handshake bound
+to an on-chain session nonce and target; the node verifies it through the
+coordinator's `/sessions/lookup` (signaling only), applies the same
+`netguard` SSRF and exit-policy checks, relays the bytes, and submits
+cumulative counters on teardown. The coordinator never sits in the byte path.
 | Funds safety | allowances only; contract holds no balance, no keys |
 | Crash recovery | TTL expiry; unconfirmed sessions never draw funds |

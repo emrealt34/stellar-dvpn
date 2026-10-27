@@ -26,6 +26,7 @@ import (
 	"dmesh/internal/geo"
 	"dmesh/internal/meshauth"
 	"dmesh/internal/soroban"
+	"dmesh/internal/tunnel"
 )
 
 func main() {
@@ -43,6 +44,12 @@ func main() {
 		err = register(args)
 	case "verify-node":
 		err = verifyNode(args)
+	case "reclaim":
+		err = reclaim(args)
+	case "tunnel-listen":
+		err = tunnelListen(args)
+	case "tunnel":
+		err = tunnelClient(args)
 	case "heartbeat":
 		err = heartbeat(args)
 	case "nodes":
@@ -80,7 +87,10 @@ Commands:
   counters   --coordinator URL --secret S... --nonce HEX --up N --down N
   settle     --rpc URL --secret S... --contract C... --id 123 --up N --down N --role client|node [--coordinator URL --nonce HEX]
   cancel     --rpc URL --secret S... --contract C... --id 123 --as-node [--coordinator URL --nonce HEX]
+  reclaim    --rpc URL --secret S... --contract C... --id 123 [--coordinator URL --nonce HEX]   (release expired hold)
   agent      --coordinator URL --secret S... --nonce HEX --url https://example.com
+  tunnel-listen --coordinator URL --secret S... [--listen 0.0.0.0:7777]   (node P2P server)
+  tunnel     --coordinator URL --secret S... --nonce HEX --node-tcp host:port [--local 127.0.0.1:1080]
 `)
 }
 
@@ -251,6 +261,59 @@ func verifyNode(args []string) error {
 	return printJSON(result)
 }
 
+// tunnelListen runs the node-side P2P tunnel server. It authenticates every
+// inbound tunnel against the coordinator (signaling only), enforces the SSRF
+// and exit-policy guard locally, and meters counters on teardown.
+func tunnelListen(args []string) error {
+	fs := flag.NewFlagSet("tunnel-listen", flag.ContinueOnError)
+	coordinator := fs.String("coordinator", os.Getenv("DMESH_COORDINATOR"), "coordinator base URL")
+	secret := fs.String("secret", "", "node S... secret seed")
+	listen := fs.String("listen", "0.0.0.0:7777", "address to accept P2P tunnels on")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	c, err := newClient(*coordinator, *secret)
+	if err != nil {
+		return err
+	}
+	ln, err := net.Listen("tcp", *listen)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "P2P tunnel node %s listening on %s\n", c.Address(), ln.Addr())
+	srv := &tunnel.NodeServer{KP: c.KP, Verifier: c, Counters: c}
+	return srv.Serve(ln)
+}
+
+// tunnelClient runs a local HTTP CONNECT proxy that exits through a node over
+// the authenticated P2P data plane; the coordinator carries no traffic.
+func tunnelClient(args []string) error {
+	fs := flag.NewFlagSet("tunnel", flag.ContinueOnError)
+	coordinator := fs.String("coordinator", os.Getenv("DMESH_COORDINATOR"), "coordinator base URL")
+	secret := fs.String("secret", "", "client S... secret seed")
+	nonce := fs.String("nonce", "", "opened session nonce hex")
+	nodeTCP := fs.String("node-tcp", "", "node tunnel listener host:port")
+	local := fs.String("local", "127.0.0.1:1080", "local CONNECT proxy address")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *nonce == "" || *nodeTCP == "" {
+		return errors.New("--nonce and --node-tcp are required")
+	}
+	c, err := newClient(*coordinator, *secret)
+	if err != nil {
+		return err
+	}
+	proxy := &tunnel.LocalProxy{ListenAddr: *local, NodeTCP: *nodeTCP, KP: c.KP, Nonce: *nonce}
+	ln, err := proxy.Listen()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "local CONNECT proxy on %s -> node %s (session %s)\n",
+		ln.Addr(), *nodeTCP, *nonce)
+	return proxy.Serve(ln)
+}
+
 func heartbeat(args []string) error {
 	fs := flag.NewFlagSet("heartbeat", flag.ContinueOnError)
 	coordinator := fs.String("coordinator", os.Getenv("DMESH_COORDINATOR"), "coordinator base URL")
@@ -305,6 +368,7 @@ func session(args []string) error {
 	geoCountry := fs.String("geo-country", os.Getenv("GEO_COUNTRY_DB"), "path to GeoLite2-Country.mmdb")
 	geoASN := fs.String("geo-asn", os.Getenv("GEO_ASN_DB"), "path to GeoLite2-ASN.mmdb")
 	allowMismatch := fs.Bool("allow-tier-mismatch", false, "proceed even if the independent tier check disagrees")
+	hold := fs.Int64("hold", 0, "stroops to lock into contract escrow for a capped spend hold (0 = allowance at settlement)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -355,7 +419,13 @@ func session(args []string) error {
 	settle := soroban.NewSettlement(rpc, contractID)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	id, txHash, err := settle.OpenSession(ctx, c.KP, *node, *token, tier, nonce, uint64(ttlSec))
+	var id *big.Int
+	var txHash string
+	if *hold > 0 {
+		id, txHash, err = settle.OpenSessionWithHold(ctx, c.KP, *node, *token, tier, nonce, uint64(ttlSec), *hold)
+	} else {
+		id, txHash, err = settle.OpenSession(ctx, c.KP, *node, *token, tier, nonce, uint64(ttlSec))
+	}
 	if err != nil {
 		return err
 	}
@@ -484,6 +554,49 @@ func cancel(args []string) error {
 		}
 	}
 	return printJSON(map[string]string{"tx_hash": txHash, "status": "cancelled"})
+}
+
+// reclaim releases an expired escrow: committed usage is paid to the node and
+// the remainder refunded, or the full hold returns to the client.
+func reclaim(args []string) error {
+	fs := flag.NewFlagSet("reclaim", flag.ContinueOnError)
+	rpcURL := fs.String("rpc", os.Getenv("DMESH_RPC"), "Soroban RPC URL")
+	secret := fs.String("secret", "", "S... secret seed (client or node)")
+	contractID := fs.String("contract", os.Getenv("DMESH_CONTRACT"), "settlement contract C address")
+	id := fs.String("id", "", "contract session id (u128 decimal)")
+	coordinator := fs.String("coordinator", os.Getenv("DMESH_COORDINATOR"), "optional coordinator URL")
+	nonce := fs.String("nonce", "", "session nonce for coordinator sync")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	*secret = envOr(*secret, "DMESH_SECRET")
+	kp, err := soroban.ParseSecret(*secret)
+	if err != nil {
+		return err
+	}
+	sessionID, ok := new(big.Int).SetString(*id, 10)
+	if !ok {
+		return fmt.Errorf("invalid session id %q", *id)
+	}
+	rpc := soroban.New(*rpcURL, "")
+	defer rpc.Close()
+	settle := soroban.NewSettlement(rpc, *contractID)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	txHash, err := settle.ReclaimHold(ctx, kp, sessionID)
+	if err != nil {
+		return err
+	}
+	if *coordinator != "" && *nonce != "" {
+		c, err := cliclient.New(*coordinator, *secret)
+		if err != nil {
+			return err
+		}
+		if err := c.RecordSettlement(*nonce, "settled", txHash, 0, 0); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: coordinator sync failed: %v\n", err)
+		}
+	}
+	return printJSON(map[string]string{"tx_hash": txHash, "status": "reclaimed"})
 }
 
 func agentFetch(args []string) error {

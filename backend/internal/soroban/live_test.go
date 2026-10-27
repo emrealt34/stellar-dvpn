@@ -226,7 +226,7 @@ func TestTestnetSettlementFullLifecycle(t *testing.T) {
 	clientAfterCancel := tokenBalance(t, ctx, client, xlmToken, clientKP.Address(), adminKP)
 	transferSpend := new(big.Int).Sub(clientBeforeCancel, clientAfterCancel)
 	// Only the resource fee may be spent; it is far below even 0.01 XLM.
-	if transferSpend.Cmp(big.NewInt(int64(xlm(1) / 100))) > 0 {
+	if transferSpend.Cmp(big.NewInt(int64(xlm(1)/100))) > 0 {
 		t.Fatalf("cancelled session cost %s stroops beyond fees; no transfer should occur", transferSpend.String())
 	}
 }

@@ -82,6 +82,36 @@ For a scraper, point an HTTP client's proxy at the coordinator and issue
 `CONNECT` with the same headers; the tunnel bytes are counted on both
 directions and recorded as counter evidence for the next settlement.
 
+## Peer-to-peer tunnel (no coordinator in the data path)
+
+For long-lived scraping, traffic can exit directly through a node instead of
+the hosted proxy. The coordinator is then used only for signaling and
+metering:
+
+```bash
+# Node: accept authenticated tunnels (verifies every session via the coordinator)
+dmesh tunnel-listen --coordinator "$DMESH_COORDINATOR" --secret "$NODE_SECRET" --listen 0.0.0.0:7777
+
+# Client: local CONNECT proxy that forwards over the authenticated P2P tunnel
+dmesh tunnel --coordinator "$DMESH_COORDINATOR" --secret "$CLIENT_SECRET" \
+  --nonce "$SESSION_NONCE" --node-tcp node.example:7777 --local 127.0.0.1:1080
+
+# Point any HTTP client at the local proxy
+HTTPS_PROXY=http://127.0.0.1:1080 curl https://example.com
+```
+
+Each tunnel carries a Stellar-signed handshake (canonical parts
+`tunnel`, `nonce`, `target`), and the node enforces the identical SSRF and
+exit-policy rules before relaying. Counters are submitted back to the
+coordinator when the tunnel closes.
+
+## Spend hold
+
+Open the on-chain session with `dmesh session --hold <stroops>` to lock a
+capped escrow; the node is guaranteed payment up to that cap while the client
+cannot be charged beyond it. Expired, unused holds are reclaimed with
+`dmesh reclaim`.
+
 ## Constraints
 
 - Destinations must be public IPs; internal/metadata addresses return `403`.

@@ -18,17 +18,19 @@ const (
 
 // Contract function names.
 const (
-	fnInitialize    = "initialize"
-	fnSetTier       = "set_tier"
-	fnSetAssetPrice = "set_asset_price"
-	fnOpenSession   = "open_session"
-	fnPropose       = "propose_settlement"
-	fnConfirm       = "confirm_settlement"
-	fnCancel        = "cancel_session"
-	fnFeeBPS        = "fee_bps"
-	fnSessionCount  = "session_count"
-	fnGetTier       = "get_tier"
-	fnGetAssetPrice = "get_asset_price"
+	fnInitialize          = "initialize"
+	fnSetTier             = "set_tier"
+	fnSetAssetPrice       = "set_asset_price"
+	fnOpenSession         = "open_session"
+	fnOpenSessionWithHold = "open_session_with_hold"
+	fnReclaimHold         = "reclaim_hold"
+	fnPropose             = "propose_settlement"
+	fnConfirm             = "confirm_settlement"
+	fnCancel              = "cancel_session"
+	fnFeeBPS              = "fee_bps"
+	fnSessionCount        = "session_count"
+	fnGetTier             = "get_tier"
+	fnGetAssetPrice       = "get_asset_price"
 )
 
 // Settlement is the typed binding to the deployed dmesh settlement contract.
@@ -128,6 +130,56 @@ func (s *Settlement) OpenSession(
 		return nil, txHash, err
 	}
 	return sessionID, txHash, nil
+}
+
+// OpenSessionWithHold opens a session and locks holdStroops of the token into
+// contract escrow from the client's allowance. The hold caps what the client
+// can pay; the unused remainder is refunded at settle/cancel/reclaim.
+func (s *Settlement) OpenSessionWithHold(
+	ctx context.Context,
+	clientKP *keypair.Full,
+	nodeAddr, tokenAddr, tier string,
+	nonce [32]byte,
+	ttlSeconds uint64,
+	holdStroops int64,
+) (sessionID *big.Int, txHash string, err error) {
+	clientAddr, err := Address(clientKP.Address())
+	if err != nil {
+		return nil, "", err
+	}
+	node, err := Address(nodeAddr)
+	if err != nil {
+		return nil, "", err
+	}
+	token, err := Address(tokenAddr)
+	if err != nil {
+		return nil, "", err
+	}
+	sym, err := Symbol(tier)
+	if err != nil {
+		return nil, "", err
+	}
+	hi, lo := i128Words(holdStroops)
+	txHash, err = s.client.Invoke(ctx, clientKP, s.contractID, fnOpenSessionWithHold,
+		[]xdr.ScVal{clientAddr, node, token, sym, BytesN32(nonce), U64(ttlSeconds), I128(hi, lo)})
+	if err != nil {
+		return nil, "", err
+	}
+	sessionID, err = s.SessionCount(ctx, clientKP)
+	if err != nil {
+		return nil, txHash, err
+	}
+	return sessionID, txHash, nil
+}
+
+// ReclaimHold releases an expired session's escrow. Either the node or the
+// client may invoke it; committed usage is paid and the rest refunded.
+func (s *Settlement) ReclaimHold(ctx context.Context, signer *keypair.Full, sessionID *big.Int) (string, error) {
+	hi, lo, err := u128Words(sessionID)
+	if err != nil {
+		return "", err
+	}
+	return s.client.Invoke(ctx, signer, s.contractID, fnReclaimHold, []xdr.ScVal{U128(hi, lo)})
 }
 
 // ProposeSettlement is signed by the client and commits its byte counters.

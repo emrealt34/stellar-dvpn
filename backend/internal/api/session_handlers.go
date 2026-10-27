@@ -140,8 +140,8 @@ func (s *Server) attachOnChain(w http.ResponseWriter, r *http.Request) {
 
 type countersRequest struct {
 	NonceHex  string `json:"nonce_hex"`
-	UpBytes   int64 `json:"up_bytes"`
-	DownBytes int64 `json:"down_bytes"`
+	UpBytes   int64  `json:"up_bytes"`
+	DownBytes int64  `json:"down_bytes"`
 }
 
 // submitCounters accepts a signed counter report from either party.
@@ -244,4 +244,44 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
+}
+
+// lookupSession lets a tunnel endpoint verify a session's state and parties
+// before accepting a peer-to-peer connection. The signer must be one of the
+// two session participants; the response carries no traffic payload.
+func (s *Server) lookupSession(w http.ResponseWriter, r *http.Request) {
+	nonce := r.URL.Query().Get("nonce")
+	if len(nonce) != 64 {
+		writeError(w, http.StatusBadRequest, errors.New("nonce query parameter (32-byte hex) required"))
+		return
+	}
+	req, err := meshauth.ParseSigned(
+		r.Header.Get(meshauth.HeaderAddress),
+		r.Header.Get(meshauth.HeaderTimestamp),
+		r.Header.Get(meshauth.HeaderSignature),
+		"GET", "session-lookup", nonce)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	session, err := s.Store.SessionByNonce(nonce)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, errors.New("unknown session"))
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if req.Address != session.ClientAddress && req.Address != session.NodeAddress {
+		writeError(w, http.StatusForbidden, errors.New("signer is not a session participant"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"nonce":          session.NonceHex,
+		"status":         session.Status,
+		"client_address": session.ClientAddress,
+		"node_address":   session.NodeAddress,
+		"tier":           session.Tier,
+		"expires_at":     session.ExpiresAt.UTC().Format(time.RFC3339),
+	})
 }

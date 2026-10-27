@@ -29,16 +29,32 @@ custody or fund theft. Scans (`govulncheck`, `npm audit`, `gitleaks`,
 | A-2 | Informational | CORS is `Access-Control-Allow-Origin: *`. | Authentication uses Stellar-signed headers, never cookies or ambient credentials, so a wildcard origin cannot authorize anything without the caller's secret key. |
 | A-3 | Informational | `GO-2026-4316` in transitive `go-chi/chi v4` (via the Stellar SDK). | The vulnerable `RedirectSlashes` symbol is outside the call graph and chi v4 has no patched release; tracked in `SECURITY.md` and the govulncheck job is advisory. |
 
+## Implemented controls (roadmap items)
+
+- **Contract-level spend hold.** `open_session_with_hold` locks a capped escrow
+  from the client's allowance for the session's lifetime. Settlement pays the
+  node and the 20% fee out of the hold and refunds any remainder; cancellation
+  refunds immediately, and after TTL either party can call `reclaim_hold`, which
+  pays the client's committed counters (if any) and refunds the rest. A
+  `released` flag prevents any double payout. Covered by five dedicated contract
+  tests; the legacy zero-hold allowance path remains fully supported.
+- **Peer-to-peer data plane.** `internal/tunnel` moves traffic directly between
+  client and node — the coordinator carries zero bytes and is used only for
+  signaling (`/sessions/lookup`) and counter collection. Each tunnel requires a
+  Stellar-signed handshake bound to an on-chain session, and the node reuses the
+  identical `netguard` SSRF/exit-policy rules, tunnel cap and idle deadlines as
+  the hosted proxy. The client exposes a local HTTP CONNECT proxy
+  (`dmesh tunnel`); the node runs `dmesh tunnel-listen`.
+
 ## Still on the roadmap
 
-- **Contract-level spend hold.** Settlement remains "serve then settle" against
-  an allowance that could theoretically be reduced mid-session. A hold placed at
-  `open_session`, reclaimable only after TTL, gives the node a hard claim and
-  the client a guaranteed cap. The data plane already refuses any session
-  without an on-chain `open_session`, so no traffic is possible off-chain.
-- **Peer-to-peer data plane.** Today the metered proxy runs in the coordinator;
-  the node-to-client VPN tunnel must reuse the same signed-session gate,
-  counters and `netguard` policy.
+- **WireGuard kernel transport.** The P2P data plane currently uses an
+  application-level authenticated TCP relay; the bundled WireGuard control plane
+  will carry the same signed-session gate, counters and `netguard` policy once
+  the kernel module path is exercised across the Windows/Linux builds.
+- **Signed nonce cache.** The 5-minute signed-request replay window (A-1) can be
+  narrowed with a server-side nonce cache if stricter transport semantics are
+  required.
 
 ## Tier integrity (client-to-client, no backend trust)
 

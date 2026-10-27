@@ -71,6 +71,7 @@ func New(cfg *config.Config, st *store.Store,
 	mux.HandleFunc("POST /api/v1/sessions/counters", s.submitCounters)
 	mux.HandleFunc("POST /api/v1/sessions/settlement", s.recordSettlement)
 	mux.HandleFunc("GET /api/v1/sessions", s.listSessions)
+	mux.HandleFunc("GET /api/v1/sessions/lookup", s.lookupSession)
 
 	// Agent API (metered fetch / CONNECT)
 	mux.HandleFunc("GET /api/v1/agent/fetch", s.agentFetch)

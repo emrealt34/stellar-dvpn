@@ -252,3 +252,107 @@ fn pricing_math_is_exact() {
     // Half GB residential => $0.075 => 0.75 XLM.
     assert_eq!(compute_cost(GB / 2, RESIDENTIAL, XLM_PRICE), 7_500_000);
 }
+
+const HOLD: i128 = 200_000_000; // 20 XLM escrowed
+
+#[test]
+fn hold_is_locked_settled_and_remainder_refunded() {
+    let ctx = setup();
+    let dc = DMeshSettlementClient::new(&ctx.env, &ctx.contract);
+    let tc = token::Client::new(&ctx.env, &ctx.token);
+
+    let sid = dc.open_session_with_hold(
+        &ctx.client,
+        &ctx.node,
+        &ctx.token,
+        &Symbol::new(&ctx.env, "res"),
+        &nonce(&ctx.env, 10),
+        &3600,
+        &HOLD,
+    );
+    // Escrow sits in the contract; the client was debited immediately.
+    assert_eq!(tc.balance(&ctx.contract), HOLD);
+    assert_eq!(tc.balance(&ctx.client), 1_000_000_000 - HOLD);
+
+    // 1 GB residential -> 1.5 XLM total (12M node, 3M fee).
+    let up: u64 = 600_000_000;
+    let down: u64 = 400_000_000;
+    dc.propose_settlement(&sid, &up, &down);
+    dc.confirm_settlement(&sid, &up, &down);
+
+    assert_eq!(tc.balance(&ctx.node), 12_000_000);
+    assert_eq!(tc.balance(&ctx.admin), 3_000_000);
+    // Client gets the unused 18.5 XLM back: 1000 - 200 + 185 = 985.
+    assert_eq!(tc.balance(&ctx.client), 985_000_000);
+    assert_eq!(tc.balance(&ctx.contract), 0);
+    let s = dc.get_session(&sid).unwrap();
+    assert!(s.settled && s.released);
+}
+
+#[test]
+fn hold_cancel_refunds_in_full() {
+    let ctx = setup();
+    let dc = DMeshSettlementClient::new(&ctx.env, &ctx.contract);
+    let tc = token::Client::new(&ctx.env, &ctx.token);
+    let sid = dc.open_session_with_hold(
+        &ctx.client, &ctx.node, &ctx.token,
+        &Symbol::new(&ctx.env, "res"), &nonce(&ctx.env, 11), &3600, &HOLD,
+    );
+    dc.cancel_session(&sid, &false);
+    assert_eq!(tc.balance(&ctx.client), 1_000_000_000);
+    assert_eq!(tc.balance(&ctx.contract), 0);
+    assert!(dc.get_session(&sid).unwrap().released);
+    // Repeating the cancel must not move any funds a second time.
+    let before = tc.balance(&ctx.client);
+    let _ = dc.try_cancel_session(&sid, &false);
+    assert_eq!(tc.balance(&ctx.client), before);
+    assert_eq!(tc.balance(&ctx.contract), 0);
+}
+
+#[test]
+fn reclaim_before_expiry_is_rejected() {
+    let ctx = setup();
+    let dc = DMeshSettlementClient::new(&ctx.env, &ctx.contract);
+    let sid = dc.open_session_with_hold(
+        &ctx.client, &ctx.node, &ctx.token,
+        &Symbol::new(&ctx.env, "res"), &nonce(&ctx.env, 12), &3600, &HOLD,
+    );
+    assert!(dc.try_reclaim_hold(&sid).is_err());
+}
+
+#[test]
+fn reclaim_after_expiry_refunds_full_without_proposal() {
+    let ctx = setup();
+    let dc = DMeshSettlementClient::new(&ctx.env, &ctx.contract);
+    let tc = token::Client::new(&ctx.env, &ctx.token);
+    let sid = dc.open_session_with_hold(
+        &ctx.client, &ctx.node, &ctx.token,
+        &Symbol::new(&ctx.env, "res"), &nonce(&ctx.env, 13), &60, &HOLD,
+    );
+    ctx.env.ledger().set_timestamp(ctx.env.ledger().timestamp() + 61);
+    dc.reclaim_hold(&sid);
+    assert_eq!(tc.balance(&ctx.client), 1_000_000_000);
+    assert_eq!(tc.balance(&ctx.contract), 0);
+    assert!(dc.get_session(&sid).unwrap().released);
+}
+
+#[test]
+fn reclaim_after_expiry_pays_committed_usage() {
+    let ctx = setup();
+    let dc = DMeshSettlementClient::new(&ctx.env, &ctx.contract);
+    let tc = token::Client::new(&ctx.env, &ctx.token);
+    let sid = dc.open_session_with_hold(
+        &ctx.client, &ctx.node, &ctx.token,
+        &Symbol::new(&ctx.env, "res"), &nonce(&ctx.env, 14), &60, &HOLD,
+    );
+    // Client commits 1 GB (15M) but the node never confirms before TTL.
+    dc.propose_settlement(&sid, &(GB as u64), &0);
+    ctx.env.ledger().set_timestamp(ctx.env.ledger().timestamp() + 61);
+    dc.reclaim_hold(&sid);
+
+    assert_eq!(tc.balance(&ctx.node), 12_000_000);
+    assert_eq!(tc.balance(&ctx.admin), 3_000_000);
+    assert_eq!(tc.balance(&ctx.client), 985_000_000);
+    assert_eq!(tc.balance(&ctx.contract), 0);
+    assert!(dc.get_session(&sid).unwrap().released);
+}

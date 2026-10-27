@@ -21,9 +21,9 @@ import (
 
 // Default endpoints for the Stellar testnet.
 const (
-	DefaultTestnetRPC        = "https://soroban-testnet.stellar.org"
-	TestnetPassphrase        = "Test SDF Network ; September 2015"
-	defaultBaseFee     int64 = 100 // 100 stroops inclusion fee, matching stellar-cli
+	DefaultTestnetRPC       = "https://soroban-testnet.stellar.org"
+	TestnetPassphrase       = "Test SDF Network ; September 2015"
+	defaultBaseFee    int64 = 100 // 100 stroops inclusion fee, matching stellar-cli
 	// Generous validity window: the simulate -> rebuild -> sign -> send flow,
 	// plus upstream friendbot/ledger latency on testnet, must not outlive the
 	// timebound (an expired envelope is rejected by core with no funds moved).

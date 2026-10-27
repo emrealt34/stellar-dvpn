@@ -185,6 +185,30 @@ func (c *Client) NodeByMesh(mesh string) (*DirectoryNode, error) {
 	return nil, fmt.Errorf("node %s is not in the public directory", mesh)
 }
 
+// SessionInfo is the coordinator's signed-read view of a session, used by P2P
+// tunnel endpoints to authenticate a connection without touching the data path.
+type SessionInfo struct {
+	Nonce         string `json:"nonce"`
+	Status        string `json:"status"`
+	ClientAddress string `json:"client_address"`
+	NodeAddress   string `json:"node_address"`
+	Tier          string `json:"tier"`
+	ExpiresAt     string `json:"expires_at"`
+}
+
+// LookupSession returns the session for a nonce, signed as the caller.
+func (c *Client) LookupSession(nonce string) (*SessionInfo, error) {
+	h, err := c.signedHeaders("GET", "session-lookup", nonce)
+	if err != nil {
+		return nil, err
+	}
+	var out SessionInfo
+	if err := c.do(http.MethodGet, "/api/v1/sessions/lookup?nonce="+nonce, nil, h, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // Heartbeat refreshes liveness and cumulative traffic counters.
 func (c *Client) Heartbeat(up, down int64) error {
 	headers, err := c.signedHeaders("heartbeat")
