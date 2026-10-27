@@ -123,7 +123,15 @@ func (s *Server) attachOnChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, errors.New("only the session client can attach its open tx"))
 		return
 	}
+	if in.ContractSessionID == "" || in.TxHash == "" {
+		writeError(w, http.StatusBadRequest, errors.New("contract_session_id and tx_hash are required"))
+		return
+	}
 	if err := s.Store.AttachOpenTx(session.ID, in.ContractSessionID, in.TxHash); err != nil {
+		if errors.Is(err, store.ErrSessionNotAttachable) {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}

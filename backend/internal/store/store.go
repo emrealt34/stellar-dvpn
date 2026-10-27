@@ -50,7 +50,7 @@ type Session struct {
 	Tier              string    `json:"tier"`
 	NonceHex          string    `json:"nonce_hex"`
 	ExpiresAt         time.Time `json:"expires_at"`
-	Status            string    `json:"status"` // opened | proposed | settled | cancelled | expired
+	Status      string    `json:"status"` // pending | opened | proposed | settled | cancelled | expired
 	UpBytes           int64     `json:"up_bytes"`
 	DownBytes         int64    `json:"down_bytes"`
 	TxOpen            string    `json:"tx_open,omitempty"`
@@ -324,14 +324,20 @@ func scanSession(row interface{ Scan(...any) error }) (*Session, error) {
 	return &v, err
 }
 
-// CreatePendingSession records a coordinator-issued session before the
-// client submits the on-chain open_session transaction.
+// ErrSessionNotAttachable indicates an on-chain open tx cannot be attached to
+// the session in its current lifecycle state.
+var ErrSessionNotAttachable = errors.New("session cannot accept an on-chain open transaction in its current state")
+
+// CreatePendingSession records a coordinator-issued session before the client
+// submits the on-chain open_session transaction. The session starts in the
+// "pending" state and cannot carry data-plane traffic until the client proves
+// the on-chain open_session via AttachOpenTx, which promotes it to "opened".
 func (s *Store) CreatePendingSession(v *Session) (*Session, error) {
 	now := time.Now().UTC()
 	res, err := s.db.Exec(
 		`INSERT INTO sessions(contract_session_id, client_address, node_address, token_address, tier,
 		   nonce_hex, expires_at, status, created_at, updated_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, 'opened', ?, ?)`,
+		 VALUES(?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
 		v.ContractSessionID, v.ClientAddress, v.NodeAddress, v.TokenAddress, v.Tier,
 		v.NonceHex, v.ExpiresAt, now, now)
 	if err != nil {
@@ -362,12 +368,29 @@ func (s *Store) NonceUsed(nonceHex string) (bool, error) {
 }
 
 // AttachOpenTx records the on-chain id and open tx once the client's
-// transaction lands.
+// transaction lands, promoting the session from "pending" to "opened". Only
+// sessions that have not yet been proposed, settled or cancelled are
+// attachable, so the data plane can only serve traffic backed by a real
+// client-signed on-chain open_session.
 func (s *Store) AttachOpenTx(id int64, contractSessionID, txHash string) error {
-	_, err := s.db.Exec(
-		`UPDATE sessions SET contract_session_id=?, tx_open=?, updated_at=? WHERE id=?`,
+	res, err := s.db.Exec(
+		`UPDATE sessions
+		    SET contract_session_id=?, tx_open=?,
+		        status=CASE WHEN status='pending' THEN 'opened' ELSE status END,
+		        updated_at=?
+		  WHERE id=? AND status IN ('pending','opened')`,
 		contractSessionID, txHash, time.Now().UTC(), id)
-	return err
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrSessionNotAttachable
+	}
+	return nil
 }
 
 // SetSessionStatus advances the lifecycle and records the related tx hash.
@@ -396,10 +419,11 @@ func (s *Store) SetSessionStatus(id int64, status, txHash string, up, down int64
 }
 
 // ExpireDueSessions marks un-settled, un-cancelled sessions past their TTL.
+// Pending sessions (never opened on chain) are reaped as well.
 func (s *Store) ExpireDueSessions() (int64, error) {
 	res, err := s.db.Exec(
 		`UPDATE sessions SET status='expired', updated_at=?
-		 WHERE status IN ('opened','proposed') AND expires_at < ?`,
+		 WHERE status IN ('pending','opened','proposed') AND expires_at < ?`,
 		time.Now().UTC(), time.Now().UTC())
 	if err != nil {
 		return 0, err

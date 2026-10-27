@@ -197,6 +197,15 @@ func TestSessionCoordinateCountersAndSettlement(t *testing.T) {
 		t.Fatalf("unknown node should be 404, got %d", status)
 	}
 
+	// The session stays pending and cannot accept traffic until the client
+	// attaches the real on-chain open_session identifiers.
+	openTxHash := "deadbeef"
+	if status, _ = doJSON(t, http.MethodPost, url+"/api/v1/sessions/onchain",
+		map[string]any{"nonce_hex": nonce, "contract_session_id": "7", "tx_hash": openTxHash},
+		client.headers(t, "attach", nonce, openTxHash)); status != http.StatusNoContent {
+		t.Fatalf("attach on-chain open tx should be 204, got %d", status)
+	}
+
 	// Both parties submit counters; monotonicity is enforced.
 	if status, _ = doJSON(t, http.MethodPost, url+"/api/v1/sessions/counters",
 		map[string]any{"nonce_hex": nonce, "up_bytes": 500, "down_bytes": 900},
@@ -256,6 +265,30 @@ func TestAgentFetchIsMeteredAndAuthenticated(t *testing.T) {
 		map[string]any{"node_address": node.kp.Address(), "token_address": "CTEST"},
 		client.headers(t, "open", node.kp.Address(), "CTEST"))
 	nonce := out["open_session_args"].(map[string]any)["nonce_hex"].(string)
+
+	// Before the on-chain open_session is attached, the session is pending and
+	// the data plane must refuse to serve any traffic (no free-riding).
+	preReq, _ := http.NewRequest(http.MethodGet, url+"/api/v1/agent/fetch?url="+target.URL, nil)
+	preH := client.headers(t, http.MethodGet, target.URL)
+	preReq.Header.Set(meshauth.HeaderAddress, preH.Get(meshauth.HeaderAddress))
+	preReq.Header.Set(meshauth.HeaderTimestamp, preH.Get(meshauth.HeaderTimestamp))
+	preReq.Header.Set(meshauth.HeaderSignature, preH.Get(meshauth.HeaderSignature))
+	preReq.Header.Set(meshauth.HeaderSession, nonce)
+	preResp, err := http.DefaultClient.Do(preReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preResp.Body.Close()
+	if preResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("pending session must not reach the data plane, got status=%d", preResp.StatusCode)
+	}
+
+	// Attach the on-chain open_session; the session is now opened and servable.
+	if status, _ := doJSON(t, http.MethodPost, url+"/api/v1/sessions/onchain",
+		map[string]any{"nonce_hex": nonce, "contract_session_id": "9", "tx_hash": "cafe1234"},
+		client.headers(t, "attach", nonce, "cafe1234")); status != http.StatusNoContent {
+		t.Fatalf("attach open tx should be 204, got %d", status)
+	}
 
 	req, _ := http.NewRequest(http.MethodGet, url+"/api/v1/agent/fetch?url="+target.URL, nil)
 	h := client.headers(t, http.MethodGet, target.URL)
