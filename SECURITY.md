@@ -69,6 +69,16 @@ custodial payout rail or treasury wallet is introduced into the core. Any
 off-ledger payout using that address is an explicit, separately operated
 integration outside the trustless core.
 
+## Tracked non-reachable advisories
+
+- **GO-2026-4316** (`github.com/go-chi/chi` v4, open redirect in
+  `RedirectSlashes`). It is pulled in transitively by
+  `go-stellar-sdk` v0.8.0 (the latest release). The vulnerable symbol is not
+  in dmesh's call graph, and chi v4 has no patched release, so it cannot be
+  bumped without an upstream change or a fork. The Go vulnerability scan is
+  therefore advisory (`continue-on-error`) and this entry is removed once the
+  dependency ships a fix.
+
 ## Reporting
 
 Report security issues privately to the repository maintainer rather than
