@@ -107,6 +107,7 @@ cd web && npm ci && npm run dev
 - [`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md) — severity-classified findings and fixes
 - [`docs/AGENT_API.md`](docs/AGENT_API.md) — signed, metered proxy for agents/scrapers
 - [`SECURITY.md`](SECURITY.md) — reporting, secret handling, advisory list
+- [`docs/ACCEPTABLE_USE.md`](docs/ACCEPTABLE_USE.md) — enforced exit policy and abuse process
 - [`docs/DEPENDENCIES.md`](docs/DEPENDENCIES.md) — dependency and vulnerability report
 
 A client never trusts the backend for geography: it independently classifies a
