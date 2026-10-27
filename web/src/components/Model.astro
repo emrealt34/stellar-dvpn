@@ -1,9 +1,14 @@
 ---
 const cards = [
   {
-    title: 'Custody stays with the user',
+    title: 'Peer-to-peer data plane',
     body:
-      'The service holds no wallet and no balance. A session draws funds only from an allowance the client approves, executed by the contract through transfer_from.',
+      'The coordinator never carries traffic. An agent opens an authenticated tunnel straight to a node; the node enforces the SSRF guard and the Tor-style exit policy (port 25 and other abuse ports blocked) before any byte is relayed.',
+  },
+  {
+    title: 'Capped spend hold, non-custodial',
+    body:
+      'open_session_with_hold locks a time-boxed escrow from the client allowance. The node holds a guaranteed claim up to the cap, the client can never be charged more, and any remainder is refunded automatically.',
   },
   {
     title: 'Two signatures per settlement',
@@ -11,24 +16,19 @@ const cards = [
       'The client proposes the byte counters and the node confirms the same values. A mismatch fails on chain, so traffic can be neither invented nor underpaid.',
   },
   {
-    title: 'Sessions expire safely',
-    body:
-      'Every session has a TTL. If either side disappears, it simply expires. An unconfirmed session never moves funds beyond network fees.',
-  },
-  {
     title: 'Pricing anyone can verify',
     body:
-      'Rates and the 20% protocol fee live in contract storage, and changes emit events. The same values the UI shows are the values enforced on chain.',
+      'Residential and datacenter rates and the immutable 20% protocol fee live in contract storage, with change events. The values the UI shows are the values enforced on chain.',
   },
 ];
 ---
 
 <section id="model" class="alt">
   <div class="wrap">
-    <h2>Settlement without a trusted middleman</h2>
+    <h2>Built for agents, not another VPN</h2>
     <p class="section-sub">
-      The coordinator relays signed statements and indexes the directory. It cannot spend funds
-      or rewrite counters — the contract is the only authority.
+      The coordinator is limited to signaling, the node directory and liveness heartbeats.
+      Requests, data and payments move peer to peer under contract-enforced rules.
     </p>
     <div class="grid g3">
       {cards.map((c) => (

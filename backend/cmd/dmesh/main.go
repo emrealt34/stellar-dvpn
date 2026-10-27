@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,7 +15,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -24,7 +22,7 @@ import (
 
 	"dmesh/internal/cliclient"
 	"dmesh/internal/geo"
-	"dmesh/internal/meshauth"
+	"dmesh/internal/nat"
 	"dmesh/internal/soroban"
 	"dmesh/internal/tunnel"
 )
@@ -62,8 +60,10 @@ func main() {
 		err = settle(args)
 	case "cancel":
 		err = cancel(args)
-	case "agent":
-		err = agentFetch(args)
+	case "nat-probe":
+		err = natProbe(args)
+	case "attach":
+		err = attach(args)
 	default:
 		usage()
 		os.Exit(2)
@@ -84,13 +84,17 @@ Commands:
   nodes      --coordinator URL             Public node directory
   verify-node --coordinator URL --secret S... --mesh G... --ip 1.2.3.4 [--geo-country F --geo-asn F]
   session    --coordinator URL --secret S... --node G... --token C/G... [--node-ip 1.2.3.4] [--ttl 3600] [--open]
+  attach     --coordinator URL --secret S... --nonce HEX --contract-id ID --tx-hash HASH
   counters   --coordinator URL --secret S... --nonce HEX --up N --down N
   settle     --rpc URL --secret S... --contract C... --id 123 --up N --down N --role client|node [--coordinator URL --nonce HEX]
   cancel     --rpc URL --secret S... --contract C... --id 123 --as-node [--coordinator URL --nonce HEX]
   reclaim    --rpc URL --secret S... --contract C... --id 123 [--coordinator URL --nonce HEX]   (release expired hold)
-  agent      --coordinator URL --secret S... --nonce HEX --url https://example.com
-  tunnel-listen --coordinator URL --secret S... [--listen 0.0.0.0:7777]   (node P2P server)
+  nat-probe  [--stun host:port ...]            Classify local NAT (public/cone/symmetric/CGNAT) via STUN
+  tunnel-listen --coordinator URL --secret S... [--listen 0.0.0.0:7777] [--external host:port] [--register]
   tunnel     --coordinator URL --secret S... --nonce HEX --node-tcp host:port [--local 127.0.0.1:1080]
+
+There is no coordinator-side proxy: agents and scrapers send metered traffic
+directly to nodes over tunnel-listen/tunnel (the P2P data plane).
 `)
 }
 
@@ -135,6 +139,8 @@ func register(args []string) error {
 	externalIP := fs.String("ip", "", "override the externally observed IP")
 	geoCountry := fs.String("geo-country", os.Getenv("GEO_COUNTRY_DB"), "path to GeoLite2-Country.mmdb")
 	geoASN := fs.String("geo-asn", os.Getenv("GEO_ASN_DB"), "path to GeoLite2-ASN.mmdb")
+	externalEndpoint := fs.String("external", "", "public P2P dial host:port to publish (port forward/UPnP)")
+	runProbe := fs.Bool("nat-probe", false, "STUN-probe local NAT and sign nat_type/connectivity into the claim")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -150,6 +156,15 @@ func register(args []string) error {
 		ASNOrg:      strings.TrimSpace(*asnOrg),
 		ASN:         *asn,
 		Payout:      strings.TrimSpace(*payout),
+	}
+	if *runProbe || *externalEndpoint != "" {
+		// No TCP listener here: the endpoint is the explicit override; the
+		// probe still contributes the signed NAT classification.
+		claim.Endpoint, claim.NATType, claim.Connectivity, claim.CGNAT, err =
+			probeReachability(*externalEndpoint, "")
+		if err != nil {
+			return err
+		}
 	}
 
 	// Unless a full manual claim is supplied, classify locally against the
@@ -261,6 +276,45 @@ func verifyNode(args []string) error {
 	return printJSON(result)
 }
 
+// natProbe runs the local STUN classification and prints the JSON report.
+func natProbe(args []string) error {
+	fs := flag.NewFlagSet("nat-probe", flag.ContinueOnError)
+	stunCSV := fs.String("stun", "", "comma-separated STUN host:port list (default built-in)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	var servers []string
+	if strings.TrimSpace(*stunCSV) != "" {
+		for _, s := range strings.Split(*stunCSV, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				servers = append(servers, s)
+			}
+		}
+	}
+	return printJSON(nat.Classify(servers))
+}
+
+// probeReachability runs the STUN probe and, when a TCP listen port is known,
+// derives the public dial endpoint candidates. An explicit external override
+// always wins. Symmetric/CGNAT paths publish no endpoint because they cannot
+// accept inbound connections without an external relay.
+func probeReachability(external, listenAddr string) (endpoint, natType, connectivity string, cgnat bool, err error) {
+	report := nat.Classify(nil)
+	natType, connectivity, cgnat = report.NATType, report.Connectivity, report.CGNAT
+	switch {
+	case strings.TrimSpace(external) != "":
+		if _, _, perr := net.SplitHostPort(external); perr != nil {
+			return "", "", "", false, fmt.Errorf("--external must be host:port: %w", perr)
+		}
+		endpoint = external
+	case report.Connectivity == nat.Direct || report.Connectivity == nat.HolePunch:
+		if _, port, perr := net.SplitHostPort(listenAddr); perr == nil && report.PublicIP != "" {
+			endpoint = net.JoinHostPort(report.PublicIP, port)
+		}
+	}
+	return endpoint, natType, connectivity, cgnat, nil
+}
+
 // tunnelListen runs the node-side P2P tunnel server. It authenticates every
 // inbound tunnel against the coordinator (signaling only), enforces the SSRF
 // and exit-policy guard locally, and meters counters on teardown.
@@ -269,6 +323,11 @@ func tunnelListen(args []string) error {
 	coordinator := fs.String("coordinator", os.Getenv("DMESH_COORDINATOR"), "coordinator base URL")
 	secret := fs.String("secret", "", "node S... secret seed")
 	listen := fs.String("listen", "0.0.0.0:7777", "address to accept P2P tunnels on")
+	external := fs.String("external", "", "public host:port clients dial (override behind port forwarding/UPnP)")
+	register := fs.Bool("register", false, "STUN-probe reachability and (re)register this node before serving")
+	claimTier := fs.String("tier", "", "with --register: res|dc (else pass a pre-registered node)")
+	claimCountry := fs.String("country-iso", "", "with --register: country ISO code")
+	claimName := fs.String("country", "", "with --register: country name")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -280,9 +339,35 @@ func tunnelListen(args []string) error {
 	if err != nil {
 		return err
 	}
+	endpoint, natType, connectivity, cgnat, err := probeReachability(*external, ln.Addr().String())
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "NAT: type=%s connectivity=%s cgnat=%t endpoint=%s\n",
+		natType, connectivity, cgnat, orDash(endpoint))
+	if *register {
+		claim := cliclient.NodeClaim{
+			Tier: *claimTier, CountryISO: *claimCountry, CountryName: *claimName,
+			Endpoint: endpoint, NATType: natType, Connectivity: connectivity, CGNAT: cgnat,
+		}
+		if claim.Tier == "" {
+			return errors.New("--register requires --tier (and usually --country-iso/--country) or run 'dmesh register' first")
+		}
+		if _, err := c.Register(claim); err != nil {
+			return fmt.Errorf("register: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "registered node %s (signed reachability claim)\n", c.Address())
+	}
 	fmt.Fprintf(os.Stderr, "P2P tunnel node %s listening on %s\n", c.Address(), ln.Addr())
 	srv := &tunnel.NodeServer{KP: c.KP, Verifier: c, Counters: c}
 	return srv.Serve(ln)
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 // tunnelClient runs a local HTTP CONNECT proxy that exits through a node over
@@ -437,6 +522,31 @@ func session(args []string) error {
 		"tx_hash":             txHash,
 		"nonce_hex":           nonceHex,
 	})
+}
+
+// attach records the on-chain open_session transaction against a coordinated
+// session, moving it from pending to opened so the P2P data plane can serve it.
+func attach(args []string) error {
+	fs := flag.NewFlagSet("attach", flag.ContinueOnError)
+	coordinator := fs.String("coordinator", os.Getenv("DMESH_COORDINATOR"), "coordinator base URL")
+	secret := fs.String("secret", "", "client S... secret seed")
+	nonce := fs.String("nonce", "", "session nonce hex")
+	contractID := fs.String("contract-id", "", "on-chain session id returned by the contract")
+	txHash := fs.String("tx-hash", "", "open_session transaction hash")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *nonce == "" || *contractID == "" || *txHash == "" {
+		return errors.New("--nonce, --contract-id and --tx-hash are required")
+	}
+	c, err := newClient(*coordinator, *secret)
+	if err != nil {
+		return err
+	}
+	if err := c.AttachOnChain(*nonce, *contractID, *txHash); err != nil {
+		return err
+	}
+	return printJSON(map[string]string{"status": "opened", "nonce_hex": *nonce})
 }
 
 func counters(args []string) error {
@@ -597,53 +707,6 @@ func reclaim(args []string) error {
 		}
 	}
 	return printJSON(map[string]string{"tx_hash": txHash, "status": "reclaimed"})
-}
-
-func agentFetch(args []string) error {
-	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
-	coordinator := fs.String("coordinator", os.Getenv("DMESH_COORDINATOR"), "coordinator base URL")
-	secret := fs.String("secret", "", "S... secret seed")
-	nonce := fs.String("nonce", "", "active session nonce hex")
-	target := fs.String("url", "", "http(s) URL to fetch")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	c, err := newClient(*coordinator, *secret)
-	if err != nil {
-		return err
-	}
-	ts := time.Now().Unix()
-	payload := meshauth.CanonicalPayload(c.Address(), ts, http.MethodGet, *target)
-	kp, err := soroban.ParseSecret(envOr(*secret, "DMESH_SECRET"))
-	if err != nil {
-		return err
-	}
-	sig, err := kp.Sign(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequest(http.MethodGet,
-		strings.TrimRight(*coordinator, "/")+"/api/v1/agent/fetch?url="+*target, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set(meshauth.HeaderAddress, c.Address())
-	req.Header.Set(meshauth.HeaderTimestamp, strconv.FormatInt(ts, 10))
-	req.Header.Set(meshauth.HeaderSignature, base64.StdEncoding.EncodeToString(sig))
-	req.Header.Set(meshauth.HeaderSession, *nonce)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("agent fetch -> %s: %s", resp.Status, string(body))
-	}
-	fmt.Printf("X-DMesh-Bytes: %s\nX-DMesh-Session: %s\n\n",
-		resp.Header.Get("X-DMesh-Bytes"), resp.Header.Get("X-DMesh-Session"))
-	_, err = os.Stdout.Write(body)
-	return err
 }
 
 func printJSON(v any) error {

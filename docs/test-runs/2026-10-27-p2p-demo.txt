@@ -1,0 +1,101 @@
+
+[1;36m== 1. Start the signaling coordinator (no data plane) ==[0m
+{
+    "contract_configured": false,
+    "network": "Test SDF Network ; September 2015",
+    "status": "ok"
+}
+
+[1;36m== 2. Generate node and client mesh identities ==[0m
+node   GBJWCEQZQTFYVUEKDKJRWUQVGQ7O5EMIOPYODI7XGVTLVUAMKK3VDDSB
+client GDAIVVOFTDZPCHAQEOQ5JY2KU7URRABG5CJDYWN6NJAWRHBISYT5OOUS
+
+[1;36m== 3. Local STUN NAT probe (real public STUN servers) ==[0m
+{
+  "local_ip": "0.0.0.0",
+  "nat_type": "cone",
+  "cgnat": false,
+  "connectivity": "hole-punch",
+  "public_ip": "136.66.142.110",
+  "public_port": 35328,
+  "observations": [
+    {
+      "server": "stun.l.google.com:19302",
+      "public_ip": "136.66.142.110",
+      "public_port": 35328,
+      "rtt_ms": 0
+    },
+    {
+      "server": "stun.cloudflare.com:3478",
+      "public_ip": "136.66.142.110",
+      "public_port": 35328,
+      "rtt_ms": 6
+    }
+  ],
+  "hints": [
+    "stable endpoint-independent mapping; simultaneous-open hole punching or a static port forward should succeed"
+  ]
+}
+
+[1;36m== 4. Node registers a signed geo + reachability claim ==[0m
+{
+    "node": {
+        "asn": 9121,
+        "asn_org": "Demo Network",
+        "cgnat": false,
+        "connectivity": "hole-punch",
+        "country": "Turkiye",
+        "country_iso": "TR",
+        "created_at": "2026-10-27T14:44:17.418251434Z",
+        "down_bytes": 0,
+        "endpoint": "127.0.0.1:17777",
+        "id": 1,
+        "last_seen": "2026-10-27T14:44:17.418251434Z",
+        "mesh_address": "GBJWCEQZQTFYVUEKDKJRWUQVGQ7O5EMIOPYODI7XGVTLVUAMKK3VDDSB",
+        "nat_type": "cone",
+        "payout_address": "GBJWCEQZQTFYVUEKDKJRWUQVGQ7O5EMIOPYODI7XGVTLVUAMKK3VDDSB",
+        "status": "online",
+        "tier": "res",
+        "up_bytes": 0
+    },
+    "tier_source": "client-signed"
+}
+
+[1;36m== 5. Public directory (raw transport IPs are never exposed) ==[0m
+{
+    "nodes": [
+        {
+            "asn_org": "Demo Network",
+            "cgnat": false,
+            "connectivity": "hole-punch",
+            "country": "Turkiye",
+            "country_iso": "TR",
+            "endpoint": "127.0.0.1:17777",
+            "is_datacenter": false,
+            "last_seen": "2026-10-27T14:44:17.418251434Z",
+            "mesh_address": "GBJWCEQZQTFYVUEKDKJRWUQVGQ7O5EMIOPYODI7XGVTLVUAMKK3VDDSB",
+            "nat_type": "cone",
+            "payout_address": "GBJWCEQZQTFYVUEKDKJRWUQVGQ7O5EMIOPYODI7XGVTLVUAMKK3VDDSB",
+            "tier": "res"
+        }
+    ]
+}
+
+[1;36m== 6. Client coordinates a session and attaches the open_session record ==[0m
+nonce 37ac8b1edcc35b6263655c4dccf3c391733e41799fbf9dca79894054d1a060b7
+{
+    "nonce_hex": "37ac8b1edcc35b6263655c4dccf3c391733e41799fbf9dca79894054d1a060b7",
+    "status": "opened"
+}
+
+[1;36m== 7. Bring up the node P2P tunnel and the client's local CONNECT proxy ==[0m
+
+[1;36m== 8. Real public egress through the authenticated P2P tunnel ==[0m
+HTTP 200, 577 bytes via 127.0.0.1
+<title>Example Domain</title>
+
+[1;36m== 9. Exit policy: CONNECT to blocked SMTP port 25 must fail ==[0m
+curl: (56) CONNECT tunnel failed, response 502
+OK: connection to port 25 refused by the node exit policy
+
+[1;36m== All checks passed. Logs: /tmp/tmp.H2UNpDs5i4 ==[0m

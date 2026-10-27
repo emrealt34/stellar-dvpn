@@ -103,10 +103,10 @@ rate change is permanently auditable on-chain.
 | Component | Stack | Responsibility |
 |---|---|---|
 | `contract/` | Rust + Soroban | settlement, fee split, tier table, oracle entries, auth, replay protection |
-| `backend/` | Go, stdlib HTTP, SQLite | OTP, mesh registry (stores signed claims), session relay, agent API, Soroban RPC client — no geo-IP dependency |
-| `cli/` (`dmesh`) | Go | wallet, node daemon, WireGuard control, signed counters, contract calls |
-| `web/` | Astro + React | marketing site, live map/stats, docs, downloads, dashboard |
-| `extension/` | WebExtension | browser-side agent API consumer |
+| `backend/` | Go, stdlib HTTP, SQLite | OTP, mesh registry (stores signed claims), session signaling, counter collection, Soroban RPC client — no geo-IP dependency, no user traffic |
+| `cli/` (`dmesh`) | Go | wallet, P2P node daemon (`tunnel-listen`) and local CONNECT proxy (`tunnel`), STUN NAT probe, signed counters, contract calls |
+| `web/` | Astro + React | marketing site, live world map/stats, docs, downloads, dashboard |
+| `extension/` | WebExtension | browser-side consumer of the local P2P proxy |
 | `.github/` | Actions | tests, contract build, cross-platform releases, geo-DB refresh, deploys |
 
 ## Trust boundaries
@@ -118,7 +118,9 @@ rate change is permanently auditable on-chain.
 | Fee goes to protocol | hard-coded 2000 bps split in contract |
 | Node location/type | node client classifies locally against the CI-published geo DB and signs it; the consuming client independently re-classifies the node's endpoint IP and must agree before opening a session; coordinator stores the claim |
 | No double spend | settled flag + unique nonce, enforced by contract |
-| Proxy destination safety | `internal/netguard` restricts agent egress to public IPs, enforced by a dialer hook at connect time |
+| Egress destination safety | `internal/netguard` on every node restricts P2P egress to public IPs and allowed ports, enforced by a dialer hook at connect time; the coordinator has no egress path at all |
+| Node reachability | the node self-probes NAT via STUN (`internal/nat`) and signs `endpoint`/`nat_type`/`connectivity`; symmetric/CGNAT nodes publish no endpoint and are marked relay-required |
+| Spend cap | `open_session_with_hold` locks capped escrow; the node cannot claim beyond it and the client gets the remainder refunded |
 
 ### Client-to-client tier agreement
 
@@ -130,14 +132,25 @@ tier mismatch refuses the session unless the client explicitly overrides it.
 The backend is limited to signaling (relaying session messages) and node
 liveness/heartbeat storage.
 
-### Hardened agent proxy
+### Peer-to-peer data plane and NAT discovery
 
-`/api/v1/agent/fetch` and `/api/v1/agent/connect` are SSRF-safe (no loopback,
-RFC1918, link-local/metadata, multicast or unspecified destinations), enforce
-an exit-policy port denylist, cap concurrent tunnels, close idle connections,
-bound request bodies and return structured JSON errors. See
+There is no coordinator-side proxy. The node runs `dmesh tunnel-listen` and
+the agent runs `dmesh tunnel`, a local HTTP CONNECT proxy; the two peers
+establish an authenticated TCP tunnel with a Stellar-signed handshake bound to
+an on-chain session. The node applies the SSRF guard and the Tor-style exit
+policy before dialing any target, meters both directions, and submits
+cumulative counters on teardown. Replicable end-to-end:
+[`scripts/p2p-demo.sh`](scripts/p2p-demo.sh), evidence in
+[`docs/test-runs/`](docs/test-runs/). See also
 [`docs/AGENT_API.md`](docs/AGENT_API.md) and
 [`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md).
+
+Nodes classify their own network path with RFC 5389 STUN against independent
+operators and sign the result into the directory: `public`/`direct`,
+`cone`/`hole-punch`, or `symmetric` (including RFC6598 CGNAT) /
+`relay-required` with no published endpoint. The connecting peer still
+observes the real remote socket address at connect time rather than trusting
+the claim alone.
 
 ### Peer-to-peer data plane
 

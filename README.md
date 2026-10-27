@@ -4,8 +4,10 @@
 
 # dmesh
 
-Trustless decentralized bandwidth — a dVPN and a paid agent API settled by a
-Soroban smart contract on Stellar.
+Pay-per-request web access for AI agents and scrapers, settled per byte by a
+Soroban smart contract on Stellar. Traffic runs directly between agents and
+community nodes over an authenticated P2P tunnel; the coordinator is signaling
+and liveness only and never holds funds or relays user traffic.
 
 ## Live
 
@@ -70,9 +72,33 @@ and [`/api/v1/nodes`](https://dmesh-coordinator.onrender.com/api/v1/nodes).
 | Settlement contract | `CCBNQXDZIOYBSFRSXBSNMCLANJG6H6EK4HFTO2A7EJR4BJD2HGM3YHOT` |
 | XLM asset contract | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
 
-The end-to-end lifecycle (allowance, session, atomic split, replay rejection,
-cancellation with no transfer) is exercised against live testnet in
-`backend/internal/soroban/live_test.go`.
+The end-to-end lifecycle (allowance, capped spend hold, session, atomic split,
+replay rejection, cancellation with no transfer) is exercised against live
+testnet in `backend/internal/soroban/live_test.go`.
+
+### P2P data plane in three commands
+
+```bash
+# Node: discover your NAT type, sign the reachability claim, accept tunnels
+dmesh nat-probe
+dmesh register --coordinator "$URL" --secret "$NODE_S" --tier res \
+  --country-iso TR --country Turkiye --asn 9121 --asn-org "Example AS" \
+  --nat-probe --external 203.0.113.7:7777
+dmesh tunnel-listen --coordinator "$URL" --secret "$NODE_S" --listen 0.0.0.0:7777
+
+# Agent: coordinate + attach the on-chain open_session, then expose a local proxy
+dmesh session  --coordinator "$URL" --secret "$CLIENT_S" --node "$NODE_G" --token C...
+dmesh attach   --coordinator "$URL" --secret "$CLIENT_S" --nonce "$NONCE" --contract-id 1 --tx-hash "$HASH"
+dmesh tunnel   --coordinator "$URL" --secret "$CLIENT_S" --nonce "$NONCE" \
+  --node-tcp 203.0.113.7:7777 --local 127.0.0.1:1080
+curl -x http://127.0.0.1:1080 https://example.com
+```
+
+A fully scripted local run — coordinator, node, agent proxy, real public
+egress and the blocked-port exit-policy check — lives in
+[`scripts/p2p-demo.sh`](scripts/p2p-demo.sh), with a captured transcript in
+[`docs/test-runs/`](docs/test-runs/). The coordinator exposes no fetch or
+CONNECT endpoint: all traffic stays peer to peer.
 
 ## Layout
 
@@ -81,7 +107,8 @@ cancellation with no transfer) is exercised against live testnet in
 | `contract/` | Rust/Soroban settlement contract (tier table, fee split, auth, replay guard) |
 | `backend/` | Go coordinator (`dmeshd`) and reference client (`dmesh`); stdlib HTTP, SQLite, pure-Go build |
 | `web/` | Astro + React static app: marketing, live network island, pricing, downloads |
-| `scripts/` | Dependency/vulnerability report generation |
+| `scripts/` | Dependency/vulnerability reports, reproducible P2P demo (`p2p-demo.sh`) |
+| `docs/test-runs/` | Captured end-to-end evidence from real P2P/egress runs |
 | `.github/workflows/` | Build, test, contract/wasm, releases, Pages deploy, geo-DB refresh, security scans |
 
 ## Develop

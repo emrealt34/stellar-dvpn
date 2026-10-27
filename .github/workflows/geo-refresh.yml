@@ -1,11 +1,11 @@
 name: geo-db-refresh
 
-# GeoLite2 databases are refreshed daily so the coordinator always derives
-# node country and residential/datacenter tier from fresh data. Requires
-# MAXMIND_LICENSE_KEY (free GeoLite2 account) as a repository secret.
-# The refreshed files are published as rolling release assets on the
-# "geoip-latest" tag; deployments download them instead of baking binaries
-# into git history.
+# GeoLite2 databases are refreshed daily and published as rolling release
+# assets on the "geoip-latest" tag. The coordinator never classifies IPs:
+# node and consuming clients download these databases and derive country and
+# residential/datacenter tier locally, then sign their own claims. Requires
+# MAXMIND_LICENSE_KEY (a free GeoLite2 account) as a repository secret.
+# Databases are released as assets rather than committed to git history.
 on:
   schedule:
     - cron: "0 3 * * *"

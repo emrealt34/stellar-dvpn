@@ -12,7 +12,6 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/keypair"
 
-	"dmesh/internal/agent"
 	"dmesh/internal/api"
 	"dmesh/internal/auth"
 	"dmesh/internal/cliclient"
@@ -42,7 +41,7 @@ func TestLivePeerToPeerEgress(t *testing.T) {
 	cfg.SessionDefaultTTL = time.Hour
 	cfg.MaxBandwidthBps = 1_500_000_000
 	meter := metering.New(st, cfg.MaxBandwidthBps)
-	handler := api.New(cfg, st, nil, nil, meter, agent.New(st, meter), auth.ConsoleSender{})
+	handler := api.New(cfg, st, nil, nil, meter, auth.ConsoleSender{})
 	coord := httptest.NewServer(handler)
 	defer coord.Close()
 

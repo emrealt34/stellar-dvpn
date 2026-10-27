@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,7 +20,20 @@ const (
 	maxCountryISOLen    = 8
 	maxCountryNameLen   = 80
 	maxASNOrgLen        = 120
+	maxEndpointLen      = 255 // host:port, IPv6 included
+	maxNATTypeLen       = 16
+	maxConnectivityLen  = 20
 )
+
+// allowedNATTypes/allowedConnectivity bound the self-probed reachability
+// vocabulary; unknown values are rejected rather than stored.
+var allowedNATTypes = map[string]bool{
+	"public": true, "cone": true, "symmetric": true,
+	"udp-blocked": true, "probe-failed": true, "": true,
+}
+var allowedConnectivity = map[string]bool{
+	"direct": true, "hole-punch": true, "relay-required": true, "unknown": true, "": true,
+}
 
 // allowedTiers are the two pricing classes the contract understands.
 var allowedTiers = map[string]bool{"res": true, "dc": true}
@@ -33,6 +48,12 @@ type registerRequest struct {
 	ASN           uint   `json:"asn"`
 	ASNOrg        string `json:"asn_org"`
 	PayoutAddress string `json:"payout_address"`
+	// Self-probed STUN reachability. The endpoint is the operator-published
+	// dial address; an empty endpoint means the node is not directly reachable.
+	Endpoint     string `json:"endpoint"`
+	NATType      string `json:"nat_type"`
+	Connectivity string `json:"connectivity"`
+	CGNAT        bool   `json:"cgnat"`
 }
 
 // registerNode registers a mesh node. The only identity is the Stellar G
@@ -51,6 +72,9 @@ func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 	in.CountryName = strings.TrimSpace(in.CountryName)
 	in.ASNOrg = strings.TrimSpace(in.ASNOrg)
 	in.PayoutAddress = strings.TrimSpace(in.PayoutAddress)
+	in.Endpoint = strings.TrimSpace(in.Endpoint)
+	in.NATType = strings.TrimSpace(in.NATType)
+	in.Connectivity = strings.TrimSpace(in.Connectivity)
 
 	if !allowedTiers[in.Tier] {
 		writeError(w, http.StatusBadRequest, errTierInvalid)
@@ -68,6 +92,20 @@ func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errPayoutBadChars)
 		return
 	}
+	if len(in.Endpoint) > maxEndpointLen || len(in.NATType) > maxNATTypeLen || len(in.Connectivity) > maxConnectivityLen {
+		writeError(w, http.StatusBadRequest, errors.New("reachability field too long"))
+		return
+	}
+	if !allowedNATTypes[in.NATType] || !allowedConnectivity[in.Connectivity] {
+		writeError(w, http.StatusBadRequest, errors.New("unknown nat_type or connectivity value"))
+		return
+	}
+	if in.Endpoint != "" {
+		if host, _, err := net.SplitHostPort(in.Endpoint); err != nil || host == "" {
+			writeError(w, http.StatusBadRequest, errors.New("endpoint must be host:port"))
+			return
+		}
+	}
 
 	// Every claimed field participates in the canonical signed payload, so the
 	// stored record is exactly what the node's own key attested to.
@@ -79,6 +117,10 @@ func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 		strconv.FormatUint(uint64(in.ASN), 10),
 		in.ASNOrg,
 		in.PayoutAddress,
+		in.Endpoint,
+		in.NATType,
+		in.Connectivity,
+		strconv.FormatBool(in.CGNAT),
 	}
 	req, err := meshauth.ParseSigned(
 		r.Header.Get(meshauth.HeaderAddress),
@@ -101,6 +143,10 @@ func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 		ASNOrg:        in.ASNOrg,
 		Tier:          in.Tier,
 		IP:            clientIP(r).String(),
+		Endpoint:      in.Endpoint,
+		NATType:       in.NATType,
+		Connectivity:  in.Connectivity,
+		CGNAT:         in.CGNAT,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -164,7 +210,13 @@ func (s *Server) listNodes(w http.ResponseWriter, _ *http.Request) {
 			"tier":           n.Tier,
 			"asn_org":        n.ASNOrg,
 			"is_datacenter":  n.Tier == "dc",
-			"last_seen":      n.LastSeen,
+			// Operator-published dial information; the coordinator-observed
+			// transport IP remains private.
+			"endpoint":     n.Endpoint,
+			"nat_type":     n.NATType,
+			"connectivity": n.Connectivity,
+			"cgnat":        n.CGNAT,
+			"last_seen":    n.LastSeen,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"nodes": public})

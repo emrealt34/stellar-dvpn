@@ -1,0 +1,15 @@
+# gitleaks configuration for dmesh. The default rule set stays active; the
+# only allowlist covers synthetic fixtures inside test files. Real credentials
+# must never appear anywhere, including tests.
+title = "dmesh gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic in-test fixtures (e.g. dmesh_abc123), never real credentials"
+paths = [
+  '''(.*?)_test\.go$''',
+  '''(.*?)_test\.rs$''',
+  '''(.*?)/testdata/''',
+]

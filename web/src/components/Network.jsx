@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import WorldMap from './WorldMap.jsx';
 
 const API = __API_BASE__;
 const REFRESH_MS = 15000;
@@ -45,6 +46,14 @@ function Stat({ label, value }) {
   );
 }
 
+function natBadge(node) {
+  const type = node.nat_type || 'unknown';
+  const conn = node.connectivity || 'unknown';
+  const cls = conn === 'direct' ? 'direct' : conn === 'hole-punch' ? 'punch' : 'relay';
+  const label = node.cgnat ? `${type} · CGNAT` : type;
+  return <span className={`nat ${cls}`}>{label}</span>;
+}
+
 export default function Network() {
   const [stats, setStats] = useState(null);
   const [nodes, setNodes] = useState([]);
@@ -72,7 +81,6 @@ export default function Network() {
     return () => clearInterval(id);
   }, [load]);
 
-  // Distinct locations for the location chip row.
   const locations = useMemo(() => {
     const map = new Map();
     for (const n of nodes) {
@@ -84,6 +92,7 @@ export default function Network() {
     return [...map.values()];
   }, [nodes]);
 
+  const reachable = nodes.filter((n) => n.connectivity !== 'relay-required').length;
   const online = stats ? stats.online_nodes : 0;
 
   return (
@@ -91,15 +100,15 @@ export default function Network() {
       <div className="wrap">
         <h2>Live network</h2>
         <p className="section-sub">
-          Read directly from the testnet coordinator every {REFRESH_MS / 1000} seconds — node count
-          and locations update in real time.
+          Node count, geography and reachability are read from the testnet coordinator every{' '}
+          {REFRESH_MS / 1000} seconds and rendered on the map in real time.
         </p>
 
         <div className="stat-row">
           <Stat label="Online nodes" value={stats ? stats.online_nodes : '—'} />
           <Stat label="Locations" value={stats ? stats.countries : '—'} />
+          <Stat label="Dialable now" value={stats ? reachable : '—'} />
           <Stat label="Residential" value={stats ? stats.residential : '—'} />
-          <Stat label="Datacenter" value={stats ? stats.datacenter : '—'} />
         </div>
 
         {locations.length > 0 && (
@@ -112,6 +121,8 @@ export default function Network() {
             ))}
           </div>
         )}
+
+        <WorldMap nodes={nodes} />
 
         <div className="card table-card">
           <div className="table-head">
@@ -126,7 +137,8 @@ export default function Network() {
 
           {nodes.length === 0 ? (
             <div className="empty">
-              No online nodes yet. Register one with the CLI and it appears here in real time.
+              No online nodes yet. Register one with the CLI and it appears here and on the map in
+              real time.
             </div>
           ) : (
             <table>
@@ -136,7 +148,8 @@ export default function Network() {
                   <th>Node</th>
                   <th>Location</th>
                   <th>Tier</th>
-                  <th>Network</th>
+                  <th>NAT / reachability</th>
+                  <th>Endpoint</th>
                   <th>Last seen</th>
                 </tr>
               </thead>
@@ -158,7 +171,8 @@ export default function Network() {
                         {n.tier === 'dc' ? 'Datacenter' : 'Residential'}
                       </span>
                     </td>
-                    <td>{n.asn_org || '—'}</td>
+                    <td>{natBadge(n)}</td>
+                    <td className="mono-cell endpoint">{n.endpoint || 'relay required'}</td>
                     <td>{ago(n.last_seen)}</td>
                   </tr>
                 ))}
@@ -199,11 +213,16 @@ export default function Network() {
         }
         .updated { color: var(--ink-soft); font-size: 13px; }
         .empty { padding: 44px 20px; text-align: center; color: var(--ink-soft); }
-        .mono-cell { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+        .mono-cell { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
+        .endpoint { color: var(--ink-soft); }
         .country { display: inline-flex; align-items: center; gap: 8px; }
-        .tier { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 980px; }
+        .tier { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 980px; white-space: nowrap; }
         .tier.res { background: rgba(52,199,89,.14); color: #1a7f37; }
         .tier.dc { background: rgba(0,113,227,.12); color: var(--accent); }
+        .nat { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 980px; white-space: nowrap; }
+        .nat.direct { background: rgba(52,199,89,.14); color: #1a7f37; }
+        .nat.punch { background: rgba(255,149,0,.14); color: #b25e00; }
+        .nat.relay { background: rgba(255,59,48,.12); color: #c4271c; }
         .status-dot {
           width: 9px; height: 9px; border-radius: 50%;
           background: #34c759; display: inline-block;

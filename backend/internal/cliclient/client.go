@@ -103,6 +103,12 @@ type NodeClaim struct {
 	ASN         uint
 	ASNOrg      string
 	Payout      string
+	// Reachability as probed locally with internal/nat. The coordinator only
+	// stores the signed values; it never tests reachability itself.
+	Endpoint     string
+	NATType      string
+	Connectivity string
+	CGNAT        bool
 }
 
 // Register registers the local mesh address as a node, signing the full claim
@@ -115,6 +121,10 @@ func (c *Client) Register(claim NodeClaim) (map[string]any, error) {
 		"asn":            claim.ASN,
 		"asn_org":        claim.ASNOrg,
 		"payout_address": claim.Payout,
+		"endpoint":       claim.Endpoint,
+		"nat_type":       claim.NATType,
+		"connectivity":   claim.Connectivity,
+		"cgnat":          claim.CGNAT,
 	}
 	parts := []string{
 		"register",
@@ -124,6 +134,10 @@ func (c *Client) Register(claim NodeClaim) (map[string]any, error) {
 		strconv.FormatUint(uint64(claim.ASN), 10),
 		claim.ASNOrg,
 		claim.Payout,
+		claim.Endpoint,
+		claim.NATType,
+		claim.Connectivity,
+		strconv.FormatBool(claim.CGNAT),
 	}
 	headers, err := c.signedHeaders(parts...)
 	if err != nil {
@@ -157,6 +171,10 @@ type DirectoryNode struct {
 	Tier          string `json:"tier"`
 	ASNOrg        string `json:"asn_org"`
 	IsDatacenter  bool   `json:"is_datacenter"`
+	Endpoint      string `json:"endpoint"`
+	NATType       string `json:"nat_type"`
+	Connectivity  string `json:"connectivity"`
+	CGNAT         bool   `json:"cgnat"`
 	LastSeen      string `json:"last_seen"`
 }
 

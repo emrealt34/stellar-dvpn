@@ -1,10 +1,37 @@
 # Security audit
 
-A structured review of the coordinator and agent proxy, classified by severity
-and with the resolution for each finding. The settlement contract is the
-authority for money; the coordinator cannot move funds, so no finding grants
-custody or fund theft. Scans (`govulncheck`, `npm audit`, `gitleaks`,
+A structured review of the coordinator and the P2P data plane, classified by
+severity and with the resolution for each finding. The settlement contract is
+the authority for money; the coordinator cannot move funds, so no finding
+grants custody or fund theft. Scans (`govulncheck`, `npm audit`, `gitleaks`,
 `cargo audit`) run in the `quality` workflow.
+
+## Round 2 — P2P data plane, hosted-proxy removal, reachability claims
+
+| ID | Severity | Finding | Resolution |
+| --- | --- | --- | --- |
+| H-3 | High | The coordinator still hosted a metered fetch/CONNECT proxy. Even with SSRF guards, a hosted relay is an open-proxy liability, concentrates bandwidth cost and blocks the "signaling only" trust model. | The hosted proxy was deleted (`/agent/fetch`, `/agent/connect`, `internal/agent`). All traffic now runs over the authenticated P2P tunnel; the coordinator carries no user bytes and its SSRF/open-proxy surface is gone. Verified by `TestLivePeerToPeerEgress` against a real public host. |
+| M-4 | Medium | Node reachability (endpoint, NAT type, CGNAT) could not be attested, so clients had no trustworthy way to know how to dial a node. | New `internal/nat` runs RFC 5389 STUN probes against independent operators; `endpoint`, `nat_type`, `connectivity` and `cgnat` are part of the signed registration payload with enum and `host:port` validation. Tampering fails signature verification (`TestNodeReachabilityClaimRoundTrip`). |
+| M-5 | Medium | A node operator could publish a malformed/unbounded endpoint string. | Length caps (255), strict `net.SplitHostPort` validation and fixed vocabulary checks reject bad claims before storage. |
+| L-4 | Low | gitleaks flagged a synthetic test token (`dmesh_abc123`) as a generic API key. | `.gitleaks.toml` allowlists test files only; default rules remain active and the full-history scan is clean. |
+| L-5 | Low | The 110m land dataset and node map introduced an unbounded client asset. | GeoJSON simplified and vendored at ~84 KB; no third-party runtime requests or tracking. |
+
+Scan evidence for this round: `gitleaks detect` (20 commits) reports no leaks;
+`npm audit --omit=dev` reports 0 vulnerabilities; the Go suite passes with
+`go vet` clean. `govulncheck` remains an advisory CI gate because the 2 GB
+build environment cannot complete its whole-program analysis locally; the only
+open advisory is the non-reachable transitive `go-chi/chi v4` symbol tracked
+below.
+
+### NAT classification trust model
+
+STUN results are self-probed and signed, never asserted by the coordinator.
+Two independent STUN operators must return the same reflexive mapping for a
+`cone` classification; a differing mapping is `symmetric` (and a 100.64/10
+local address confirms CGNAT). Symmetric/CGNAT nodes publish no endpoint and
+are marked `relay-required`, so clients never waste attempts on an
+undialable node. The observed remote IP at tunnel connect time remains the
+ultimate live check — a signed claim is never trusted blindly.
 
 ## Resolved
 
@@ -56,6 +83,9 @@ custody or fund theft. Scans (`govulncheck`, `npm audit`, `gitleaks`,
 - **Signed nonce cache.** The 5-minute signed-request replay window (A-1) can be
   narrowed with a server-side nonce cache if stricter transport semantics are
   required.
+- **Community relay for symmetric NAT/CGNAT.** `relay-required` nodes currently
+  cannot accept inbound tunnels; a community-operated, metered relay (outside
+  the coordinator) will close that gap without re-centralizing the data plane.
 
 ## Tier integrity (client-to-client, no backend trust)
 

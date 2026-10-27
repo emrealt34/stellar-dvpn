@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"dmesh/internal/agent"
 	"dmesh/internal/api"
 	"dmesh/internal/auth"
 	"dmesh/internal/config"
@@ -46,7 +45,6 @@ func main() {
 	}
 
 	meter := metering.New(st, cfg.MaxBandwidthBps)
-	agentService := agent.New(st, meter)
 
 	sender := auth.Sender(auth.ConsoleSender{})
 	if cfg.SMTPHost != "" {
@@ -59,13 +57,13 @@ func main() {
 		log.Printf("warning: SMTP not configured; dashboard OTP codes are printed to the console (dev only)")
 	}
 
-	handler := api.New(cfg, st, sorobanClient, settlement, meter, agentService, sender)
+	handler := api.New(cfg, st, sorobanClient, settlement, meter, sender)
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 15 * time.Second,
-		ReadTimeout:       60 * time.Second, // CONNECT tunnels are hijacked and exempt
+		ReadTimeout:       60 * time.Second, // signaling API only; no long-lived streams
 		IdleTimeout:       120 * time.Second,
 	}
 	go func() {

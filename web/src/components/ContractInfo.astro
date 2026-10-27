@@ -29,9 +29,12 @@ const ids = [
           <>
             <div className="id-label">{i.label}</div>
             <span className="mono">{i.value}</span>
+            <p class="links">
+              <a href={`https://expert.testnet.stellar.expert/contract/${i.value}`} target="_blank" rel="noopener">view on Stellar Expert</a>
+            </p>
           </>
         ))}
-        <p class="network">Network: Test SDF Network ; September 2015</p>
+        <p class="network">Network: Test SDF Network ; September 2015 · escrow via open_session_with_hold</p>
       </div>
     </div>
   </div>

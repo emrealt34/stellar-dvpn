@@ -23,7 +23,7 @@ is enforced today and the remaining hardening roadmap.
 | Client uses 3 GB but pays for 1 | `confirm_settlement` only accepts byte counters identical to the client's `propose_settlement`; mismatched confirmations fail and nothing moves. |
 | Node invents traffic | The node cannot pull funds without the client's matching on-chain proposal; every session has a unique nonce, so replays are rejected. |
 | Replay of a settled session | Re-confirming a settled session fails on chain (covered by the live testnet lifecycle test). |
-| Free-riding the data plane without an on-chain session | Sessions are created `pending`. The agent API (`/agent/fetch`, `/agent/connect`) and counter ingestion only accept `opened`/`proposed` sessions, and a session becomes `opened` only after the client attaches a real on-chain `open_session` transaction. A pending or expired session is refused with `401`. |
+| Free-riding the data plane without an on-chain session | Sessions are created `pending`. The P2P tunnel handshake and counter ingestion only accept `opened`/`proposed` sessions, and a session becomes `opened` only after the client attaches a real on-chain `open_session` transaction. A pending or expired session is refused at the node. The coordinator exposes no data-plane endpoint. |
 | Disappearing node / client | Sessions carry a TTL. Unconfirmed sessions expire and never move funds; either party can cancel, which moves no money beyond network resource fees. |
 | Hidden fees / price edits | The 20% (2000 bps) protocol fee is hard-coded; tier and asset prices live in contract storage and every change emits an event. |
 | False node geography | The coordinator performs no IP lookup. The node client resolves its own country and tier locally against the CI-published geo database and signs the entire claim; every field is covered by the Stellar signature, so it cannot be altered in transit. The coordinator only validates shape and stores it. |
@@ -41,18 +41,18 @@ is enforced today and the remaining hardening roadmap.
 
 ## Known limits and roadmap
 
-1. **Absolute payment guarantee (escrow/hold).** An allowance can in principle
-   be reduced after a session opens, so "serve then settle" still assumes the
-   allowance remains until settlement. The hard guarantee is a contract-level
-   spend hold placed at `open_session`: the node can claim against confirmed
-   counters within the TTL, and the client can reclaim the unspent hold only
-   after expiry. This is the next contract iteration.
+1. **Spend hold (shipped).** `open_session_with_hold` pulls a capped escrow
+   from the client allowance into contract-held balance at open. Settlement
+   pays the node and the 20% fee from the hold and refunds the remainder;
+   cancellation returns the full hold, and `reclaim_hold` releases an expired
+   one. The legacy zero-hold allowance path remains available.
 2. **On-chain allowance precheck.** The coordinator will additionally read the
    live SAC allowance before promoting a session to `opened` and cap the
    session byte budget to it, stopping service when the budget is reached.
-3. **Node-side data plane.** The metered agent API is enforced centrally; the
-   peer-to-peer VPN data plane on each node must apply the same
-   pending/opened gate and counter logic using the shared contract.
+3. **Relay for symmetric NAT/CGNAT nodes.** Cone and public nodes connect
+   directly or via hole punching; symmetric/CGNAT nodes are currently marked
+   `relay-required` and publish no endpoint. A community-run, metered relay
+   (never coordinator-hosted) is the next data-plane iteration.
 4. **Geo database distribution.** The node client owns classification and
    reads the CI-published GeoLite2 files from the rolling `geoip-latest`
    release. The coordinator has no geo dependency and no geo database to

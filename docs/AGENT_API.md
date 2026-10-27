@@ -1,121 +1,95 @@
-# Agent API — metered proxy for agents and scrapers
+# Agent data plane — metered P2P access for agents and scrapers
 
-The coordinator exposes an authenticated, metered egress proxy for HTTP
-fetching and tunnelling. Every request is signed with a Stellar ed25519 key
-and bound to an **on-chain session**, so traffic is always attributable and
-settled through the Soroban contract. The proxy only dials public internet
-addresses (loopback, private and metadata ranges are blocked).
+Agents and scrapers do not send traffic to the coordinator. The coordinator is
+a signaling, directory and liveness service only. Data flows over an
+authenticated, metered **peer-to-peer tunnel** straight to a node, and the node
+performs the egress with the SSRF guard and exit policy enforced locally.
 
-## Endpoints
+## Components
 
-| Method | Path | Purpose |
+| Piece | Where it runs | Responsibility |
 | --- | --- | --- |
-| GET | `/api/v1/agent/fetch?url=<https-url>` | Server-side GET, metered by response bytes (25 MB cap per call). |
-| CONNECT | `/api/v1/agent/connect` | HTTP CONNECT tunnel for larger streams / arbitrary TCP over TLS. |
+| `dmeshd` coordinator | hosted service | directory, session signaling, counters, heartbeat — no user traffic |
+| `dmesh tunnel-listen` | node | P2P server, session verification, `netguard` egress policy, byte metering |
+| `dmesh tunnel` | agent host | local HTTP `CONNECT` proxy that tunnels every request to the node |
+| Soroban contract | Stellar testnet | spend hold, two-party settlement, 20% protocol fee |
 
-Both require an `opened` (or `proposed`) session. A session stays `pending`
-until its on-chain `open_session` is attached, so there is no un-metered path.
+## Request lifecycle
 
-## Signed headers
+1. The agent discovers a node in the public directory, including its `endpoint`,
+   `nat_type` and `connectivity` (`direct`, `hole-punch`, `relay-required`).
+2. The two parties coordinate a session and the client attaches the on-chain
+   `open_session` (optionally `open_session_with_hold` for a capped escrow).
+   Only an `opened`/`proposed` session can carry traffic.
+3. The agent runs a local CONNECT proxy:
 
-All three headers are required, plus the session nonce for agent calls:
+   ```bash
+   dmesh tunnel \
+     --coordinator https://dmesh-coordinator.onrender.com \
+     --secret S... \
+     --nonce <session-nonce-hex> \
+     --node-tcp 203.0.113.7:7777 \
+     --local 127.0.0.1:1080
+   ```
 
-| Header | Content |
-| --- | --- |
-| `X-DMesh-Address` | the client's `G...` address |
-| `X-DMesh-Timestamp` | current unix seconds (±5 min window) |
-| `X-DMesh-Signature` | base64 ed25519 signature |
-| `X-DMesh-Session` | the session nonce hex |
+4. Any standard HTTP client or scraper uses it as an ordinary proxy:
 
-The signed canonical payload is newline-joined and identical on every client:
+   ```bash
+   curl -x http://127.0.0.1:1080 https://example.com
+   ```
 
-```
-dmesh-v1
-<address>
-<unix-timestamp>
-<part 1>
-<part 2>
-...
-```
+   Go scraper:
 
-For `fetch`, the parts are the HTTP method (`GET`) and the exact target URL.
-For `connect`, they are `CONNECT` and the `host:port`.
+   ```go
+   transport := &http.Transport{
+       Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: "127.0.0.1:1080"}),
+   }
+   client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+   resp, err := client.Get("https://example.com/data.json")
+   ```
 
-## Go example
+## Tunnel protocol
 
-```go
-import (
-    "encoding/base64"
-    "net/http"
-    "strconv"
-    "strings"
-    "time"
+The client opens a TCP connection to the node and immediately sends one
+newline-terminated JSON handshake (`internal/tunnel`):
 
-    "github.com/stellar/go-stellar-sdk/keypair"
-)
-
-func sign(kp *keypair.Full, parts ...string) http.Header {
-    ts := time.Now().Unix()
-    payload := strings.Join(append([]string{
-        "dmesh-v1", kp.Address(), strconv.FormatInt(ts, 10),
-    }, parts...), "\n")
-    sig, _ := kp.Sign([]byte(payload))
-    h := http.Header{}
-    h.Set("X-DMesh-Address", kp.Address())
-    h.Set("X-DMesh-Timestamp", strconv.FormatInt(ts, 10))
-    h.Set("X-DMesh-Signature", base64.StdEncoding.EncodeToString(sig))
-    return h
-}
-
-// metered server-side GET
-func fetch(base string, kp *keypair.Full, nonce, target string) (*http.Response, error) {
-    req, _ := http.NewRequest(http.MethodGet, base+"/api/v1/agent/fetch?url="+target, nil)
-    for k, vs := range sign(kp, http.MethodGet, target) {
-        req.Header[k] = vs
-    }
-    req.Header.Set("X-DMesh-Session", nonce)
-    return http.DefaultClient.Do(req)
+```json
+{
+  "v": 1,
+  "nonce": "<session nonce hex>",
+  "address": "G... client mesh address",
+  "timestamp": 1761560000,
+  "target": "example.com:443",
+  "signature": "<base64 ed25519 over dmesh-v1 canonical payload>"
 }
 ```
 
-For a scraper, point an HTTP client's proxy at the coordinator and issue
-`CONNECT` with the same headers; the tunnel bytes are counted on both
-directions and recorded as counter evidence for the next settlement.
+The node verifies the Stellar signature, confirms the session state with the
+coordinator, checks the target against the exit policy, then dials and relays.
+Byte counters in both directions are submitted to the coordinator on teardown
+and become the settlement evidence.
 
-## Peer-to-peer tunnel (no coordinator in the data path)
+## Safety and limits
 
-For long-lived scraping, traffic can exit directly through a node instead of
-the hosted proxy. The coordinator is then used only for signaling and
-metering:
+- No loopback, RFC1918, link-local, metadata, multicast or unspecified
+  destinations; the dial-time control hook also closes DNS rebinding.
+- Blocked abuse ports include 25/465/587 (SMTP), 135-139/445 (SMB/RPC),
+  111, 2049 and others — see [`ACCEPTABLE_USE.md`](ACCEPTABLE_USE.md).
+- Per-node tunnel cap (128 concurrent) and a five-minute idle deadline.
+- The coordinator exposes no fetch or CONNECT endpoint; removing the hosted
+  proxy eliminated its SSRF/open-proxy attack surface entirely.
 
-```bash
-# Node: accept authenticated tunnels (verifies every session via the coordinator)
-dmesh tunnel-listen --coordinator "$DMESH_COORDINATOR" --secret "$NODE_SECRET" --listen 0.0.0.0:7777
+## NAT and reachability
 
-# Client: local CONNECT proxy that forwards over the authenticated P2P tunnel
-dmesh tunnel --coordinator "$DMESH_COORDINATOR" --secret "$CLIENT_SECRET" \
-  --nonce "$SESSION_NONCE" --node-tcp node.example:7777 --local 127.0.0.1:1080
+Nodes self-probe with RFC 5389 STUN (`dmesh nat-probe`) and sign the result
+into their claim:
 
-# Point any HTTP client at the local proxy
-HTTPS_PROXY=http://127.0.0.1:1080 curl https://example.com
-```
+| `nat_type` | Meaning | `connectivity` |
+| --- | --- | --- |
+| `public` | public interface, no NAT | `direct` |
+| `cone` | endpoint-independent mapping (full/restricted/port-restricted) | `hole-punch` |
+| `symmetric` | mapping varies per destination, typical of CGNAT | `relay-required` |
+| `udp-blocked` | STUN unreachable | `relay-required` |
 
-Each tunnel carries a Stellar-signed handshake (canonical parts
-`tunnel`, `nonce`, `target`), and the node enforces the identical SSRF and
-exit-policy rules before relaying. Counters are submitted back to the
-coordinator when the tunnel closes.
-
-## Spend hold
-
-Open the on-chain session with `dmesh session --hold <stroops>` to lock a
-capped escrow; the node is guaranteed payment up to that cap while the client
-cannot be charged beyond it. Expired, unused holds are reclaimed with
-`dmesh reclaim`.
-
-## Constraints
-
-- Destinations must be public IPs; internal/metadata addresses return `403`.
-- `fetch` buffers up to 25 MB; use `connect` for larger responses.
-- Idle tunnels close after five minutes and at most 64 run concurrently.
-- Counters must stay monotonic and under the anti-fraud byte/second ceiling,
-  and only the two session parties may submit them.
+`relay-required` nodes publish no endpoint and should enable port
+forwarding/UPnP or participate as clients until a community relay exists.

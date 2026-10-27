@@ -10,7 +10,12 @@ const repo = 'https://github.com/emrealt34/stellar-dvpn';
       <span>dmesh</span>
     </div>
     <p>Open source under the MIT license. Testnet software — use test funds only.</p>
-    <a href={repo} target="_blank" rel="noopener">GitHub</a>
+    <nav class="legal">
+      <a href={`${repo}/blob/main/TERMS.md`} target="_blank" rel="noopener">Terms</a>
+      <a href={`${repo}/blob/main/docs/ACCEPTABLE_USE.md`} target="_blank" rel="noopener">Acceptable use</a>
+      <a href={`${repo}/security/policy`} target="_blank" rel="noopener">Report abuse</a>
+      <a href={repo} target="_blank" rel="noopener">GitHub</a>
+    </nav>
   </div>
 </footer>
 
@@ -37,7 +42,10 @@ const repo = 'https://github.com/emrealt34/stellar-dvpn';
   .inner p {
     margin: 0;
   }
-  .inner a {
+  .legal {
     margin-left: auto;
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
   }
 </style>

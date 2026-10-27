@@ -23,21 +23,27 @@ type Store struct{ db *sql.DB }
 
 // Node is a mesh participant identified solely by its Stellar G address.
 type Node struct {
-	ID            int64     `json:"id"`
-	MeshAddress   string    `json:"mesh_address"` // G... address, the only identity required
-	Email         string    `json:"email,omitempty"` // optional, linked via dashboard OTP
-	PayoutAddress string    `json:"payout_address,omitempty"` // optional node payout address; informational only, never used to move funds
-	CountryISO    string    `json:"country_iso"`
-	CountryName string    `json:"country"`
-	ASN         uint      `json:"asn"`
-	ASNOrg      string    `json:"asn_org"`
-	Tier        string    `json:"tier"` // geo.TierResidential ("res") or geo.TierDatacenter ("dc")
-	IP          string    `json:"-"` // never serialized to clients
-	Status      string    `json:"status"` // "online" | "offline"
-	UpBytes     int64     `json:"up_bytes"`
-	DownBytes   int64    `json:"down_bytes"`
-	LastSeen    time.Time `json:"last_seen"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID            int64  `json:"id"`
+	MeshAddress   string `json:"mesh_address"`             // G... address, the only identity required
+	Email         string `json:"email,omitempty"`          // optional, linked via dashboard OTP
+	PayoutAddress string `json:"payout_address,omitempty"` // optional node payout address; informational only, never used to move funds
+	CountryISO    string `json:"country_iso"`
+	CountryName   string `json:"country"`
+	ASN           uint   `json:"asn"`
+	ASNOrg        string `json:"asn_org"`
+	Tier          string `json:"tier"` // geo.TierResidential ("res") or geo.TierDatacenter ("dc")
+	IP            string `json:"-"`    // coordinator-observed transport IP; never serialized
+	// Reachability, self-probed by the node via STUN and covered by its
+	// signature. Endpoint is the operator-published P2P dial address.
+	Endpoint     string    `json:"endpoint"`     // public host:port clients should dial, "" when unreachable
+	NATType      string    `json:"nat_type"`     // nat.Public | nat.Cone | nat.Symmetric | nat.UDPBlocked ...
+	Connectivity string    `json:"connectivity"` // nat.Direct | nat.HolePunch | nat.RelayRequired
+	CGNAT        bool      `json:"cgnat"`
+	Status       string    `json:"status"` // "online" | "offline"
+	UpBytes      int64     `json:"up_bytes"`
+	DownBytes    int64     `json:"down_bytes"`
+	LastSeen     time.Time `json:"last_seen"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // Session mirrors the lifecycle of an on-chain settlement session. The
@@ -51,9 +57,9 @@ type Session struct {
 	Tier              string    `json:"tier"`
 	NonceHex          string    `json:"nonce_hex"`
 	ExpiresAt         time.Time `json:"expires_at"`
-	Status      string    `json:"status"` // pending | opened | proposed | settled | cancelled | expired
+	Status            string    `json:"status"` // pending | opened | proposed | settled | cancelled | expired
 	UpBytes           int64     `json:"up_bytes"`
-	DownBytes         int64    `json:"down_bytes"`
+	DownBytes         int64     `json:"down_bytes"`
 	TxOpen            string    `json:"tx_open,omitempty"`
 	TxPropose         string    `json:"tx_propose,omitempty"`
 	TxConfirm         string    `json:"tx_confirm,omitempty"`
@@ -115,6 +121,10 @@ CREATE TABLE IF NOT EXISTS nodes (
 	asn_org       TEXT NOT NULL DEFAULT '',
 	tier          TEXT NOT NULL DEFAULT 'res',
 	ip            TEXT NOT NULL DEFAULT '',
+	endpoint      TEXT NOT NULL DEFAULT '',
+	nat_type      TEXT NOT NULL DEFAULT '',
+	connectivity  TEXT NOT NULL DEFAULT '',
+	cgnat         INTEGER NOT NULL DEFAULT 0,
 	status        TEXT NOT NULL DEFAULT 'offline',
 	up_bytes      INTEGER NOT NULL DEFAULT 0,
 	down_bytes    INTEGER NOT NULL DEFAULT 0,
@@ -194,13 +204,15 @@ func (s *Store) SetSetting(key, value string) error {
 // nodes
 // ---------------------------------------------------------------------------
 
-const nodeColumns = `id, mesh_address, COALESCE(email,''), country_iso, country_name, asn, asn_org, tier, ip, status,
+const nodeColumns = `id, mesh_address, COALESCE(email,''), country_iso, country_name, asn, asn_org, tier, ip,
+	COALESCE(endpoint,''), COALESCE(nat_type,''), COALESCE(connectivity,''), cgnat, status,
 	up_bytes, down_bytes, last_seen, created_at, COALESCE(payout_address,'')`
 
 func scanNode(row interface{ Scan(...any) error }) (*Node, error) {
 	var n Node
 	err := row.Scan(&n.ID, &n.MeshAddress, &n.Email, &n.CountryISO, &n.CountryName, &n.ASN, &n.ASNOrg,
-		&n.Tier, &n.IP, &n.Status, &n.UpBytes, &n.DownBytes, &n.LastSeen, &n.CreatedAt, &n.PayoutAddress)
+		&n.Tier, &n.IP, &n.Endpoint, &n.NATType, &n.Connectivity, &n.CGNAT, &n.Status,
+		&n.UpBytes, &n.DownBytes, &n.LastSeen, &n.CreatedAt, &n.PayoutAddress)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -211,15 +223,23 @@ func scanNode(row interface{ Scan(...any) error }) (*Node, error) {
 // geo/tier claim. Re-registration refreshes the claim and last_seen.
 func (s *Store) UpsertNode(n *Node) (*Node, error) {
 	now := time.Now().UTC()
+	cgnat := 0
+	if n.CGNAT {
+		cgnat = 1
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO nodes(mesh_address, country_iso, country_name, asn, asn_org, tier, ip, status, last_seen, created_at, payout_address)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, 'online', ?, ?, ?)
+		`INSERT INTO nodes(mesh_address, country_iso, country_name, asn, asn_org, tier, ip,
+		   endpoint, nat_type, connectivity, cgnat, status, last_seen, created_at, payout_address)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'online', ?, ?, ?)
 		 ON CONFLICT(mesh_address) DO UPDATE SET
 		   country_iso = excluded.country_iso, country_name = excluded.country_name,
 		   asn = excluded.asn, asn_org = excluded.asn_org, tier = excluded.tier,
-		   ip = excluded.ip, status = 'online', last_seen = excluded.last_seen,
+		   ip = excluded.ip, endpoint = excluded.endpoint, nat_type = excluded.nat_type,
+		   connectivity = excluded.connectivity, cgnat = excluded.cgnat,
+		   status = 'online', last_seen = excluded.last_seen,
 		   payout_address = COALESCE(NULLIF(excluded.payout_address, ''), nodes.payout_address)`,
-		n.MeshAddress, n.CountryISO, n.CountryName, n.ASN, n.ASNOrg, n.Tier, n.IP, now, now, n.PayoutAddress)
+		n.MeshAddress, n.CountryISO, n.CountryName, n.ASN, n.ASNOrg, n.Tier, n.IP,
+		n.Endpoint, n.NATType, n.Connectivity, cgnat, now, now, n.PayoutAddress)
 	if err != nil {
 		return nil, err
 	}

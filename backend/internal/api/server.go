@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"dmesh/internal/agent"
 	"dmesh/internal/auth"
 	"dmesh/internal/config"
 	"dmesh/internal/meshauth"
@@ -18,14 +17,15 @@ import (
 	"dmesh/internal/store"
 )
 
-// Server wires coordinator services together.
+// Server wires coordinator services together. The coordinator is signaling
+// and liveness only: it never relays user traffic. P2P data-plane tunnels run
+// directly between clients and nodes (internal/tunnel).
 type Server struct {
 	Cfg       *config.Config
 	Store     *store.Store
 	Soroban   *soroban.Client
 	Settle    *soroban.Settlement // nil until SETTLEMENT_CONTRACT_ID is set
 	Metering  *metering.Service
-	Agent     *agent.Service
 	Sender    auth.Sender
 	limiter   *rateLimiter // per email, bounds OTP requests per inbox
 	ipLimiter *rateLimiter // per source IP, bounds OTP requests across inboxes
@@ -33,17 +33,17 @@ type Server struct {
 }
 
 // New constructs the HTTP handler. The coordinator performs no geo/IP
-// classification: nodes sign their own geo claim, keeping this service dumb.
+// classification: nodes sign their own geo and reachability claims, keeping
+// this service dumb.
 func New(cfg *config.Config, st *store.Store,
 	sorobanClient *soroban.Client, settle *soroban.Settlement,
-	meter *metering.Service, ag *agent.Service, sender auth.Sender) http.Handler {
+	meter *metering.Service, sender auth.Sender) http.Handler {
 	s := &Server{
 		Cfg:       cfg,
 		Store:     st,
 		Soroban:   sorobanClient,
 		Settle:    settle,
 		Metering:  meter,
-		Agent:     ag,
 		Sender:    sender,
 		limiter:   newRateLimiter(3, 10*time.Minute),
 		ipLimiter: newRateLimiter(10, 10*time.Minute),
@@ -73,9 +73,9 @@ func New(cfg *config.Config, st *store.Store,
 	mux.HandleFunc("GET /api/v1/sessions", s.listSessions)
 	mux.HandleFunc("GET /api/v1/sessions/lookup", s.lookupSession)
 
-	// Agent API (metered fetch / CONNECT)
-	mux.HandleFunc("GET /api/v1/agent/fetch", s.agentFetch)
-	mux.HandleFunc("CONNECT /api/v1/agent/connect", s.agentConnect)
+	// No data-plane proxy is exposed here. Agents and scrapers send their
+	// metered fetch/CONNECT traffic directly to nodes over the authenticated
+	// P2P tunnel protocol; the coordinator only verifies session state.
 
 	// Dashboard (email OTP exists here only)
 	mux.HandleFunc("POST /api/v1/dashboard/otp/request", s.requestOTP)
@@ -89,9 +89,8 @@ func New(cfg *config.Config, st *store.Store,
 	return cors(mux)
 }
 
-// maxJSONBody caps every request body at 1 MiB; the JSON API never needs
-// more, and this prevents oversized-payload memory abuse. CONNECT tunnels are
-// hijacked after the headers and are unaffected.
+// maxJSONBody caps every request body at 1 MiB; the JSON signaling API never
+// needs more, and this prevents oversized-payload memory abuse.
 const maxJSONBody int64 = 1 << 20
 
 // cors allows browser-based clients (the web UI) to read the public,

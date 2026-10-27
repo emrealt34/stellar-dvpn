@@ -14,7 +14,6 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/keypair"
 
-	"dmesh/internal/agent"
 	"dmesh/internal/api"
 	"dmesh/internal/auth"
 	"dmesh/internal/config"
@@ -64,10 +63,9 @@ func newTestServer(t *testing.T) (string, *store.Store) {
 	cfg.MaxBandwidthBps = 1_500_000_000
 
 	meter := metering.New(st, cfg.MaxBandwidthBps)
-	// Integration tests target loopback httptest servers; production keeps the
-	// SSRF guard on by constructing agent.New without options.
-	agentSvc := agent.New(st, meter, agent.AllowPrivateEgress())
-	handler := api.New(cfg, st, nil, nil, meter, agentSvc, auth.ConsoleSender{})
+	// The coordinator carries no data plane; P2P tunnels are tested in
+	// internal/tunnel with the same netguard exit policy.
+	handler := api.New(cfg, st, nil, nil, meter, auth.ConsoleSender{})
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	return srv.URL, st
@@ -76,12 +74,16 @@ func newTestServer(t *testing.T) (string, *store.Store) {
 // nodeProfile is the client-derived, signed geo/tier claim a node registers.
 // The coordinator no longer performs any IP geo lookup.
 type nodeProfile struct {
-	Tier        string
-	CountryISO  string
-	CountryName string
-	ASN         uint
-	ASNOrg      string
-	Payout      string
+	Tier         string
+	CountryISO   string
+	CountryName  string
+	ASN          uint
+	ASNOrg       string
+	Payout       string
+	Endpoint     string
+	NATType      string
+	Connectivity string
+	CGNAT        bool
 }
 
 func defaultProfile() nodeProfile {
@@ -92,6 +94,8 @@ func (p nodeProfile) body() map[string]any {
 	return map[string]any{
 		"tier": p.Tier, "country_iso": p.CountryISO, "country": p.CountryName,
 		"asn": p.ASN, "asn_org": p.ASNOrg, "payout_address": p.Payout,
+		"endpoint": p.Endpoint, "nat_type": p.NATType, "connectivity": p.Connectivity,
+		"cgnat": p.CGNAT,
 	}
 }
 
@@ -99,7 +103,8 @@ func (p nodeProfile) body() map[string]any {
 func (p nodeProfile) headers(t *testing.T, s *signer) http.Header {
 	t.Helper()
 	return s.headers(t, "register", p.Tier, p.CountryISO, p.CountryName,
-		strconv.FormatUint(uint64(p.ASN), 10), p.ASNOrg, p.Payout)
+		strconv.FormatUint(uint64(p.ASN), 10), p.ASNOrg, p.Payout,
+		p.Endpoint, p.NATType, p.Connectivity, strconv.FormatBool(p.CGNAT))
 }
 
 func registerTestNode(t *testing.T, url string, s *signer, p nodeProfile) (int, map[string]any) {
@@ -192,6 +197,50 @@ func TestNodeRegistrationSignedClaimAndDirectory(t *testing.T) {
 	}
 	if _, leaks := nodes[0].(map[string]any)["ip"]; leaks {
 		t.Fatalf("public directory must not leak raw node IPs")
+	}
+}
+
+func TestNodeReachabilityClaimRoundTrip(t *testing.T) {
+	url, _ := newTestServer(t)
+	node := newSigner(t)
+	profile := defaultProfile()
+	profile.Endpoint = "203.0.113.7:7777"
+	profile.NATType = "cone"
+	profile.Connectivity = "hole-punch"
+	profile.CGNAT = false
+
+	status, out := registerTestNode(t, url, node, profile)
+	if status != http.StatusOK {
+		t.Fatalf("register with reachability status=%d body=%v", status, out)
+	}
+
+	// Tampering with the reachability claim after signing must be rejected.
+	tampered := profile
+	tampered.NATType = "public"
+	if status, _ = doJSON(t, http.MethodPost, url+"/api/v1/nodes/register",
+		tampered.body(), profile.headers(t, node)); status != http.StatusUnauthorized {
+		t.Fatalf("stale signature over altered nat_type should be 401, got %d", status)
+	}
+
+	resp, err := http.Get(url + "/api/v1/nodes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var dir map[string]any
+	json.NewDecoder(resp.Body).Decode(&dir)
+	first := dir["nodes"].([]any)[0].(map[string]any)
+	if first["endpoint"] != profile.Endpoint || first["nat_type"] != "cone" ||
+		first["connectivity"] != "hole-punch" || first["cgnat"] != false {
+		t.Fatalf("reachability claim not reflected in directory: %v", first)
+	}
+
+	// Unknown NAT vocabulary is a 400 before signature verification.
+	bad := defaultProfile()
+	bad.NATType = "magic-nat"
+	if status, _ = doJSON(t, http.MethodPost, url+"/api/v1/nodes/register",
+		bad.body(), bad.headers(t, node)); status != http.StatusBadRequest {
+		t.Fatalf("unknown nat_type should be 400, got %d", status)
 	}
 }
 
@@ -288,76 +337,6 @@ func TestSessionCoordinateCountersAndSettlement(t *testing.T) {
 		client.headers(t, "counters", nonce))
 	if status != http.StatusConflict {
 		t.Fatalf("settled session must reject counters, got %d", status)
-	}
-}
-
-func TestAgentFetchIsMeteredAndAuthenticated(t *testing.T) {
-	url, _ := newTestServer(t)
-	node := newSigner(t)
-	client := newSigner(t)
-
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(bytes.Repeat([]byte("x"), 4096))
-	}))
-	defer target.Close()
-
-	registerTestNode(t, url, node, defaultProfile())
-	_, out := doJSON(t, http.MethodPost, url+"/api/v1/sessions",
-		map[string]any{"node_address": node.kp.Address(), "token_address": "CTEST"},
-		client.headers(t, "open", node.kp.Address(), "CTEST"))
-	nonce := out["open_session_args"].(map[string]any)["nonce_hex"].(string)
-
-	// Before the on-chain open_session is attached, the session is pending and
-	// the data plane must refuse to serve any traffic (no free-riding).
-	preReq, _ := http.NewRequest(http.MethodGet, url+"/api/v1/agent/fetch?url="+target.URL, nil)
-	preH := client.headers(t, http.MethodGet, target.URL)
-	preReq.Header.Set(meshauth.HeaderAddress, preH.Get(meshauth.HeaderAddress))
-	preReq.Header.Set(meshauth.HeaderTimestamp, preH.Get(meshauth.HeaderTimestamp))
-	preReq.Header.Set(meshauth.HeaderSignature, preH.Get(meshauth.HeaderSignature))
-	preReq.Header.Set(meshauth.HeaderSession, nonce)
-	preResp, err := http.DefaultClient.Do(preReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	preResp.Body.Close()
-	if preResp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("pending session must not reach the data plane, got status=%d", preResp.StatusCode)
-	}
-
-	// Attach the on-chain open_session; the session is now opened and servable.
-	if status, _ := doJSON(t, http.MethodPost, url+"/api/v1/sessions/onchain",
-		map[string]any{"nonce_hex": nonce, "contract_session_id": "9", "tx_hash": "cafe1234"},
-		client.headers(t, "attach", nonce, "cafe1234")); status != http.StatusNoContent {
-		t.Fatalf("attach open tx should be 204, got %d", status)
-	}
-
-	req, _ := http.NewRequest(http.MethodGet, url+"/api/v1/agent/fetch?url="+target.URL, nil)
-	h := client.headers(t, http.MethodGet, target.URL)
-	req.Header.Set(meshauth.HeaderAddress, h.Get(meshauth.HeaderAddress))
-	req.Header.Set(meshauth.HeaderTimestamp, h.Get(meshauth.HeaderTimestamp))
-	req.Header.Set(meshauth.HeaderSignature, h.Get(meshauth.HeaderSignature))
-	req.Header.Set(meshauth.HeaderSession, nonce)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("agent fetch status=%d body=%s", resp.StatusCode, body)
-	}
-	if resp.Header.Get("X-DMesh-Bytes") != "4096" {
-		t.Fatalf("expected 4096 metered bytes, got header %q", resp.Header.Get("X-DMesh-Bytes"))
-	}
-
-	// Missing signature must be rejected.
-	resp2, err := http.Get(url + "/api/v1/agent/fetch?url=" + target.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp2.Body.Close()
-	if resp2.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("unsigned agent request should be 401, got %d", resp2.StatusCode)
 	}
 }
 
