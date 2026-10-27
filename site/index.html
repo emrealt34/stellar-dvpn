@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dmesh — trustless, non-custodial dVPN &amp; paid agent API on Stellar</title>
+<meta name="description" content="dmesh is a decentralized VPN and paid agent API settled by a Soroban smart contract. Non-custodial, no platform token, pay with real Stellar assets including XLM.">
+<style>
+  :root{
+    --bg:#070d1c; --panel:#0e1730; --panel2:#122044; --line:#1e2c52;
+    --text:#e8eefc; --muted:#9fb0d0; --accent:#38e1c6; --accent2:#2bb6ff; --accent3:#5b7cfa;
+    --warn:#ffcf6b; --radius:16px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:radial-gradient(1200px 600px at 80% -10%,#14224a 0%,var(--bg) 55%) fixed,var(--bg);
+       color:var(--text);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  a{color:var(--accent2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+  header{position:sticky;top:0;z-index:10;background:rgba(7,13,28,.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .nav{display:flex;align-items:center;gap:14px;height:64px}
+  .brand{display:flex;align-items:center;gap:11px;font-weight:800;letter-spacing:.4px;font-size:20px;color:var(--text)}
+  .brand svg{width:34px;height:34px}
+  .nav nav{margin-left:auto;display:flex;gap:20px;align-items:center;font-size:14px}
+  .nav nav a{color:var(--muted)}
+  .btn{display:inline-block;padding:11px 20px;border-radius:11px;font-weight:700;border:1px solid transparent;white-space:nowrap}
+  .btn:hover{text-decoration:none}
+  .btn-primary{background:linear-gradient(120deg,var(--accent),var(--accent2));color:#04121f}
+  .btn-ghost{border-color:var(--line);color:var(--text);background:var(--panel)}
+  .hero{padding:78px 0 46px;text-align:center}
+  .hero h1{font-size:clamp(30px,5vw,52px);line-height:1.12;margin:18px 0 14px;letter-spacing:-.5px}
+  .hero h1 span{background:linear-gradient(120deg,var(--accent),var(--accent2) 60%,var(--accent3));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero p.lead{font-size:clamp(16px,2.2vw,20px);color:var(--muted);max-width:760px;margin:0 auto 26px}
+  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .badges{margin-top:22px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+  .pill{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:6px 13px}
+  section{padding:46px 0}
+  h2{font-size:clamp(23px,3.4vw,32px);margin:0 0 8px;letter-spacing:-.3px}
+  .sub{color:var(--muted);margin:0 0 28px;max-width:720px}
+  .grid{display:grid;gap:16px}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:var(--radius);padding:22px}
+  .card h3{margin:0 0 8px;font-size:17px}
+  .card p{margin:0;color:var(--muted);font-size:14.5px}
+  .ico{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;margin-bottom:12px;background:rgba(43,182,255,.12);color:var(--accent)}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  th,td{padding:14px 16px;text-align:left;border-bottom:1px solid var(--line);font-size:15px}
+  th{color:var(--muted);font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:.6px}
+  tr:last-child td{border-bottom:none}
+  .num{font-variant-numeric:tabular-nums;font-weight:700}
+  .steps{counter-reset:s}
+  .step{position:relative;padding-left:52px}
+  .step:before{counter-increment:s;content:counter(s);position:absolute;left:0;top:20px;width:34px;height:34px;border-radius:50%;
+    display:grid;place-items:center;font-weight:800;color:#04121f;background:linear-gradient(120deg,var(--accent),var(--accent2))}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .mono{font-size:12.5px;color:var(--muted);word-break:break-all;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:11px 13px;display:block}
+  .dl{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .dl .card{display:flex;flex-direction:column;gap:8px}
+  .tag{font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;border-radius:6px;padding:3px 8px;align-self:flex-start}
+  .tag.live{background:rgba(56,225,198,.15);color:var(--accent)}
+  .tag.soon{background:rgba(255,207,107,.14);color:var(--warn)}
+  .muted{color:var(--muted)}
+  .callout{border:1px solid #234; background:linear-gradient(180deg,#0d1a38,#0b1430);border-left:3px solid var(--accent);border-radius:12px;padding:16px 18px;color:var(--muted);font-size:14.5px}
+  footer{border-top:1px solid var(--line);padding:34px 0 60px;color:var(--muted);font-size:13.5px}
+  footer .wrap{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+  footer .right{margin-left:auto}
+  @media(max-width:840px){.g3,.g4,.dl{grid-template-columns:1fr 1fr}.g2{grid-template-columns:1fr}.nav nav{display:none}}
+  @media(max-width:560px){.g3,.g4,.dl{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap nav">
+    <div class="brand">
+      <svg viewBox="0 0 128 128" aria-hidden="true">
+        <defs><linearGradient id="lg" x1="16" y1="12" x2="112" y2="116" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#38E1C6"/><stop offset=".55" stop-color="#2BB6FF"/><stop offset="1" stop-color="#5B7CFA"/>
+        </linearGradient></defs>
+        <path d="M64 8 L108 24 V62 C108 90 89 110 64 120 C39 110 20 90 20 62 V24 L64 8 Z" fill="#0B1226" stroke="url(#lg)" stroke-width="5" stroke-linejoin="round"/>
+        <g stroke="url(#lg)" stroke-width="3.2" stroke-linecap="round" opacity=".92">
+          <line x1="40" y1="52" x2="64" y2="40"/><line x1="64" y1="40" x2="88" y2="52"/>
+          <line x1="40" y1="52" x2="40" y2="78"/><line x1="88" y1="52" x2="88" y2="78"/>
+          <line x1="40" y1="78" x2="64" y2="90"/><line x1="88" y1="78" x2="64" y2="90"/>
+          <line x1="40" y1="52" x2="88" y2="78"/><line x1="88" y1="52" x2="40" y2="78"/>
+        </g>
+        <g fill="url(#lg)"><circle cx="40" cy="52" r="6"/><circle cx="88" cy="52" r="6"/><circle cx="40" cy="78" r="6"/><circle cx="88" cy="78" r="6"/></g>
+        <circle cx="64" cy="40" r="6.5" fill="#EAFBFF"/><circle cx="64" cy="90" r="6.5" fill="#EAFBFF"/>
+        <path d="M64 58 l7 7 -7 7 -7 -7 z" fill="#38E1C6"/>
+      </svg>
+      dmesh
+    </div>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#security">Security</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#download">Download</a>
+      <a href="#testnet">Testnet</a>
+      <a class="btn btn-ghost" href="https://github.com/emrealt34/stellar-dvpn" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <section class="hero">
+      <div class="badges">
+        <span class="pill">Non-custodial</span><span class="pill">No platform token</span>
+        <span class="pill">Soroban smart contract</span><span class="pill">Stellar testnet live</span>
+      </div>
+      <h1>A trustless <span>decentralized VPN</span> &amp; paid agent API,<br>settled on Stellar.</h1>
+      <p class="lead">dmesh connects clients and nodes with no party having to trust each other. Every payment is
+        enforced by an on-chain Soroban contract using allowances <em>you</em> approve. The platform never holds your
+        money and there is no dmesh token — you pay with real Stellar assets, including native XLM.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="#download">Download the CLI</a>
+        <a class="btn btn-ghost" href="https://github.com/emrealt34/stellar-dvpn" target="_blank" rel="noopener">View source (MIT)</a>
+        <a class="btn btn-ghost" href="#testnet">Live testnet API</a>
+      </div>
+    </section>
+
+    <section>
+      <h2>Built to remove trust, not just servers</h2>
+      <p class="sub">Money cannot move unless both sides authorize it, and the rules are immutable contract code — not a database an operator can edit.</p>
+      <div class="grid g3">
+        <div class="card"><div class="ico">◇</div><h3>No dmesh token, ever</h3>
+          <p>Settle in real Stellar assets — native XLM or virtually any Stellar coin/token. You choose the asset in the UI. There is no protocol token to buy, hold, or trust.</p></div>
+        <div class="card"><div class="ico">⛨</div><h3>Fully non-custodial</h3>
+          <p>No treasury wallet, no server-held balances. The contract holds no funds; it only enforces settlement. Payments are pulled via <code>transfer_from</code> from an allowance you approve.</p></div>
+        <div class="card"><div class="ico">⌗</div><h3>Contract-enforced fee</h3>
+          <p>The 20% protocol fee is hard-coded in the contract and routed directly to the protocol address. Prices and tiers live in contract storage; every change emits an auditable event.</p></div>
+        <div class="card"><div class="ico">⇄</div><h3>Dual-party authorization</h3>
+          <p>A node cannot confirm counters the client did not propose, and a client cannot use 3&nbsp;GB while paying for 1. Replay of a settled session is rejected on chain.</p></div>
+        <div class="card"><div class="ico">⏱</div><h3>Crash-safe by design</h3>
+          <p>Sessions carry a TTL. If a node or client disappears, the session simply expires. A session that is never confirmed never moves any funds — no accidental charges.</p></div>
+        <div class="card"><div class="ico">◎</div><h3>Identity is just a key</h3>
+          <p>Nodes register with a locally generated Stellar address. No email, name, or country is collected from them. Geo/IP type is resolved server-side from a CI-refreshed database — clients are never trusted.</p></div>
+      </div>
+    </section>
+
+    <section id="how">
+      <h2>How a settlement works</h2>
+      <p class="sub">Each step is a Stellar transaction signed by the party it belongs to. The coordinator only relays; it cannot spend.</p>
+      <div class="grid g2 steps">
+        <div class="card step"><h3>Approve an allowance</h3><p>The client approves a spending cap on the token's Stellar Asset Contract. Funds stay in the client's wallet; nothing is deposited to dmesh.</p></div>
+        <div class="card step"><h3>Open a metered session</h3><p>Client and node open an on-chain session bound to a nonce, tier and TTL. Traffic is metered with an anti-fraud bandwidth ceiling.</p></div>
+        <div class="card step"><h3>Propose, then confirm</h3><p>The client proposes the counters; the node confirms matching counters. Mismatched or replayed confirmations are rejected by the contract.</p></div>
+        <div class="card step"><h3>Atomic split on chain</h3><p>The contract pulls exactly the agreed amount via <code>transfer_from</code>: 80% to the node, 20% protocol fee — in a single atomic transaction.</p></div>
+      </div>
+    </section>
+
+    <section id="pricing">
+      <h2>Transparent, on-chain pricing</h2>
+      <p class="sub">Rates are stored in the contract and served live from the network. The same values power every settlement.</p>
+      <table>
+        <thead><tr><th>Node tier</th><th>Price per GB</th><th>Node receives (80%)</th><th>Protocol fee (20%)</th></tr></thead>
+        <tbody>
+          <tr><td>Residential</td><td class="num">$0.15</td><td class="num">$0.12</td><td class="num">$0.03</td></tr>
+          <tr><td>Datacenter</td><td class="num">$0.03</td><td class="num">$0.024</td><td class="num">$0.006</td></tr>
+        </tbody>
+      </table>
+      <p class="muted" style="font-size:13.5px;margin-top:10px">Protocol fee is fixed at <strong>2000 basis points (20%)</strong> in contract code. The asset's on-chain oracle price determines the exact token amount per GB.</p>
+    </section>
+
+    <section id="security">
+      <h2>No-trust security model</h2>
+      <div class="grid g2">
+        <div class="callout"><strong>“Use it and leave without paying” is not possible.</strong> Settlement is bounded by the client's approved allowance and the agreed counters; a node is paid only for counters the client proposed and the contract confirms. Unconfirmed sessions expire and charge nothing beyond network resource fees.</div>
+        <div class="callout"><strong>“A node fakes traffic” is not possible.</strong> The contract only accepts a confirmation that matches the client's proposal. Fabricated or inflated counters fail authorization, and every settled session is protected against replay.</div>
+      </div>
+    </section>
+
+    <section id="download">
+      <h2>Downloads</h2>
+      <p class="sub">Static, pure-Go builds. The <code>dmesh</code> client and <code>dmeshd</code> coordinator ship together in each archive. Mobile and desktop GUI builds are on the roadmap.</p>
+      <div class="dl">
+        <div class="card"><span class="tag live">Available</span><h3>Linux x86_64</h3><p class="muted">CLI — amd64 static binary</p>
+          <a class="btn btn-primary" href="https://github.com/emrealt34/stellar-dvpn/releases/latest/download/dmesh-linux-amd64.tar.gz">Download .tar.gz</a>
+          <a class="muted" style="font-size:12.5px" href="https://github.com/emrealt34/stellar-dvpn/releases/latest/download/dmesh-linux-amd64.sha256">SHA-256</a></div>
+        <div class="card"><span class="tag live">Available</span><h3>Linux ARM64</h3><p class="muted">CLI — arm64 static binary</p>
+          <a class="btn btn-primary" href="https://github.com/emrealt34/stellar-dvpn/releases/latest/download/dmesh-linux-arm64.tar.gz">Download .tar.gz</a>
+          <a class="muted" style="font-size:12.5px" href="https://github.com/emrealt34/stellar-dvpn/releases/latest/download/dmesh-linux-arm64.sha256">SHA-256</a></div>
+        <div class="card"><span class="tag live">Available</span><h3>Windows x86_64</h3><p class="muted">CLI — amd64 (.exe inside .tar.gz)</p>
+          <a class="btn btn-primary" href="https://github.com/emrealt34/stellar-dvpn/releases/latest/download/dmesh-windows-amd64.tar.gz">Download .tar.gz</a>
+          <a class="muted" style="font-size:12.5px" href="https://github.com/emrealt34/stellar-dvpn/releases/latest/download/dmesh-windows-amd64.sha256">SHA-256</a></div>
+        <div class="card"><span class="tag soon">Roadmap</span><h3>macOS</h3><p class="muted">Signed &amp; notarized CLI, then GUI (Intel + Apple Silicon).</p></div>
+        <div class="card"><span class="tag soon">Roadmap</span><h3>Android</h3><p class="muted">gomobile client with a VPN service.</p></div>
+        <div class="card"><span class="tag soon">Roadmap</span><h3>iOS &amp; desktop GUI</h3><p class="muted">NetworkExtension app and native desktop UI.</p></div>
+      </div>
+      <p class="muted" style="font-size:13px;margin-top:14px">Artifacts are produced by GitHub Actions CI on every version tag — see the <a href="https://github.com/emrealt34/stellar-dvpn/releases" target="_blank" rel="noopener">releases page</a>. Verify archives against the published SHA-256 before use.</p>
+    </section>
+
+    <section id="testnet">
+      <h2>Live on Stellar testnet</h2>
+      <p class="sub">The whole flow — allowance, session, settlement, split, replay rejection and cancellation — runs end-to-end against the public testnet.</p>
+      <div class="grid g2">
+        <div class="card">
+          <h3>Coordinator API</h3>
+          <span class="mono">https://dmesh-coordinator.onrender.com</span>
+          <p style="margin-top:10px"><a href="https://dmesh-coordinator.onrender.com/api/v1/health" target="_blank" rel="noopener">GET /api/v1/health</a> · <a href="https://dmesh-coordinator.onrender.com/api/v1/public/pricing" target="_blank" rel="noopener">/public/pricing</a> · <a href="https://dmesh-coordinator.onrender.com/api/v1/public/stats" target="_blank" rel="noopener">/public/stats</a></p>
+        </div>
+        <div class="card">
+          <h3>Contract identities</h3>
+          <span class="mono">settlement: CCBNQXDZIOYBSFRSXBSNMCLANJG6H6EK4HFTO2A7EJR4BJD2HGM3YHOT</span>
+          <span class="mono" style="margin-top:8px">XLM asset contract: CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC</span>
+          <p style="margin-top:10px" class="muted">Network: Test SDF Network ; September 2015 · RPC soroban-testnet.stellar.org</p>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span><strong>dmesh</strong> — open-source under the MIT license.</span>
+    <span class="right"><a href="https://github.com/emrealt34/stellar-dvpn" target="_blank" rel="noopener">GitHub</a> · non-custodial by design · testnet software, use test funds only</span>
+  </div>
+</footer>
+</body>
+</html>

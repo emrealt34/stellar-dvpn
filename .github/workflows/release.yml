@@ -1,5 +1,9 @@
 name: release
 
+# Triggered by version tags (e.g. v0.1.0). Builds the CLI client (dmesh) and
+# the coordinator daemon (dmeshd) for the platforms that are supported today,
+# publishes them to a GitHub Release with checksums, and records the platforms
+# that are on the roadmap but not yet built as explicit, always-green jobs.
 on:
   push:
     tags:
@@ -10,47 +14,70 @@ permissions:
 
 jobs:
   binaries:
+    name: build ${{ matrix.label }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
+          # --- Supported now: CLI, pure-Go static builds -------------------
           - goos: linux
             goarch: amd64
+            label: linux-amd64
           - goos: linux
             goarch: arm64
+            label: linux-arm64
           - goos: windows
             goarch: amd64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
+            label: windows-amd64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27"
           cache-dependency-path: backend/go.sum
-      - name: Build dmesh client
+      - name: Build dmesh client and dmeshd daemon
         working-directory: backend
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
+          set -euo pipefail
           mkdir -p dist
           EXT=""
           if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
-          go build -trimpath -ldflags="-s -w" -o "dist/dmesh${EXT}" ./cmd/dmesh
+          go build -trimpath -ldflags="-s -w" -o "dist/dmesh${EXT}"  ./cmd/dmesh
           go build -trimpath -ldflags="-s -w" -o "dist/dmeshd${EXT}" ./cmd/dmeshd
           tar -czf "../dmesh-${GOOS}-${GOARCH}.tar.gz" -C dist .
+      - name: Checksums
+        run: sha256sum "dmesh-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" > "dmesh-${{ matrix.goos }}-${{ matrix.goarch }}.sha256"
       - uses: actions/upload-artifact@v4
         with:
-          name: dmesh-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dmesh-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+          name: dmesh-${{ matrix.label }}
+          path: |
+            dmesh-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+            dmesh-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
+
+  # Roadmap placeholders. These targets are not built yet: macOS needs signed
+  # notarized bundles, while Android/iOS and the desktop GUI require gomobile /
+  # a native UI layer. The job stays green and simply records their status so
+  # the roadmap is visible in CI; flip them into `binaries` when ready.
+  pending-platforms:
+    name: pending targets (macOS / Android / iOS / GUI)
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "Not yet built (roadmap):"
+          echo " - darwin/amd64 + darwin/arm64 (macOS CLI, signed/notarized GUI)"
+          echo " - android/arm64 (gomobile + VPN service)"
+          echo " - ios/arm64 (NetworkExtension, App Store build)"
+          echo " - desktop GUI (Linux/Windows/macOS)"
+          echo "CLI builds for Linux and Windows are published by this release."
 
   github-release:
-    needs: binaries
+    name: publish GitHub release
+    needs: [binaries, pending-platforms]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +89,10 @@ jobs:
           shopt -s globstar
           gh release create "${GITHUB_REF_NAME}" \
             --title "dmesh ${GITHUB_REF_NAME}" \
-            --notes "Cross-platform dmesh client and dmeshd coordinator builds." \
-            artifacts/**/*.tar.gz
+            --notes "Non-custodial, Soroban-settled dmesh CLI client and coordinator daemon.
+
+Available now (CLI): Linux (amd64/arm64) and Windows (amd64).
+Roadmap (pending): macOS, Android, iOS, and the desktop GUI." \
+            artifacts/**/*.tar.gz artifacts/**/*.sha256
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
