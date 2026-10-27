@@ -1,0 +1,68 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache-dependency-path: backend/go.sum
+      - name: Build dmesh client
+        working-directory: backend
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          EXT=""
+          if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
+          go build -trimpath -ldflags="-s -w" -o "dist/dmesh${EXT}" ./cmd/dmesh
+          go build -trimpath -ldflags="-s -w" -o "dist/dmeshd${EXT}" ./cmd/dmeshd
+          tar -czf "../dmesh-${GOOS}-${GOARCH}.tar.gz" -C dist .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmesh-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dmesh-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+
+  github-release:
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish release
+        run: |
+          shopt -s globstar
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "dmesh ${GITHUB_REF_NAME}" \
+            --notes "Cross-platform dmesh client and dmeshd coordinator builds." \
+            artifacts/**/*.tar.gz
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

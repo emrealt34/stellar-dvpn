@@ -1,0 +1,28 @@
+# Local databases and secrets
+*.db
+*.db-shm
+*.db-wal
+data/
+.env
+*.secret
+
+# Build outputs
+backend/bin/
+bin/
+contract/target/
+contract/test_snapshots/
+*.wasm
+!contract/tests/fixtures/*.wasm
+
+# Editor / OS noise
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Rust
+Cargo.lock.bak
+
+# Go
+coverage.out
+*.test

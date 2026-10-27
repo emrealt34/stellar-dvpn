@@ -1,0 +1,47 @@
+name: contract
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contract
+      - name: Unit tests
+        working-directory: contract
+        run: cargo test --locked
+      - name: Build wasm
+        working-directory: contract
+        env:
+          SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2: "1"
+        run: cargo build --target wasm32v1-none --release --locked
+      - name: Install stellar-cli
+        run: |
+          curl -sL -o /tmp/stellar.tgz \
+            "https://github.com/stellar/stellar-cli/releases/download/v28.1.0/stellar-cli-28.1.0-x86_64-unknown-linux-gnu.tar.gz"
+          tar xzf /tmp/stellar.tgz -C /tmp
+          sudo mv /tmp/stellar /usr/local/bin/stellar
+          stellar --version
+      - name: Optimize contract
+        working-directory: contract
+        run: |
+          stellar contract optimize \
+            --wasm target/wasm32v1-none/release/dmesh_settlement.wasm
+          cp target/wasm32v1-none/release/dmesh_settlement.optimized.wasm \
+            dmesh_settlement.optimized.wasm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmesh-settlement-wasm
+          path: contract/dmesh_settlement.optimized.wasm

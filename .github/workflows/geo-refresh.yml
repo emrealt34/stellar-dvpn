@@ -1,0 +1,40 @@
+name: geo-db-refresh
+
+# GeoLite2 databases are refreshed daily so the coordinator always derives
+# node country and residential/datacenter tier from fresh data. Requires
+# MAXMIND_LICENSE_KEY (free GeoLite2 account) as a repository secret.
+# The refreshed files are published as rolling release assets on the
+# "geoip-latest" tag; deployments download them instead of baking binaries
+# into git history.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download GeoLite2 databases
+        run: |
+          mkdir -p geoip
+          curl -sL "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=${MAXMIND_KEY}&suffix=tar.gz" -o country.tgz
+          curl -sL "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-ASN&license_key=${MAXMIND_KEY}&suffix=tar.gz" -o asn.tgz
+          tar xzf country.tgz
+          tar xzf asn.tgz
+          cp GeoLite2-Country_*/GeoLite2-Country.mmdb geoip/
+          cp GeoLite2-ASN_*/GeoLite2-ASN.mmdb geoip/
+          tar -czf geoip-mmdb.tar.gz -C geoip .
+        env:
+          MAXMIND_KEY: ${{ secrets.MAXMIND_LICENSE_KEY }}
+      - name: Publish rolling release assets
+        run: |
+          gh release create geoip-latest --title "GeoLite2 rolling update" \
+            --notes "Refreshed daily by CI." || true
+          gh release upload geoip-latest geoip-mmdb.tar.gz --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

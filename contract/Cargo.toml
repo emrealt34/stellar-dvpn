@@ -1,0 +1,21 @@
+[package]
+name = "dmesh-settlement"
+version = "1.0.0"
+edition = "2021"
+description = "dmesh trustless bandwidth settlement contract for Stellar Soroban"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = "29.0.1"
+
+[dev-dependencies]
+soroban-sdk = { version = "29.0.1", features = ["testutils"] }
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+lto = true
