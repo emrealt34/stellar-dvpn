@@ -9,7 +9,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+# Constrained build: the dependency tree (modernc sqlite, Stellar SDK) is large
+# and small/CI builders OOM under the default parallel compiler. Serialise the
+# build and force aggressive GC to cap peak memory at the cost of speed.
+ENV GOMAXPROCS=1 GOFLAGS=-p=1 GOGC=50
+RUN CGO_ENABLED=0 GOOS=linux go build -p 1 -trimpath \
     -ldflags="-s -w" -o /out/dmeshd ./cmd/dmeshd
 # Empty data dir staged so it can be copied with non-root ownership into the
 # distroless image, which has no shell to create it at runtime.
