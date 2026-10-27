@@ -1,11 +1,15 @@
 // Package agent implements the pay-per-use agent API: authenticated HTTP
 // fetching and a CONNECT proxy whose bytes are metered against an open dmesh
-// session. No money moves here — counters become evidence that the two parties
-// settle through the Soroban contract with transfer_from allowances.
+// session. No money moves here — counters become evidence that the two
+// parties settle through the Soroban contract with transfer_from allowances.
+//
+// The proxy is SSRF-hardened: the coordinator only dials public internet
+// addresses (netguard), never loopback, private networks or cloud metadata.
 package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,28 +21,87 @@ import (
 
 	"dmesh/internal/meshauth"
 	"dmesh/internal/metering"
+	"dmesh/internal/netguard"
 	"dmesh/internal/store"
 )
 
+// maxConcurrentTunnels bounds simultaneous CONNECT tunnels per coordinator so
+// idle or abandoned connections cannot exhaust file descriptors.
+const maxConcurrentTunnels = 64
+
+// tunnelIdleTimeout closes a CONNECT tunnel with no transfer for this long.
+const tunnelIdleTimeout = 5 * time.Minute
+
 // Service serves metered agent requests.
 type Service struct {
-	Store    *store.Store
-	Metering *metering.Service
-	HTTP     *http.Client
+	Store        *store.Store
+	Metering     *metering.Service
+	HTTP         *http.Client
+	tunnels      chan struct{}
+	allowPrivate bool // test/trusted-private deployments only; see AllowPrivateEgress
+	dialer       dialContext
 }
 
-// New constructs the agent service.
-func New(st *store.Store, meter *metering.Service) *Service {
-	return &Service{
+// dialContext is the dialer interface both the safe and test dialers satisfy.
+type dialContext interface {
+	DialContext(ctx context.Context, network, address string) (net.Conn, error)
+}
+
+// Option customizes a Service.
+type Option func(*Service)
+
+// AllowPrivateEgress disables the public-address guard. Production must not
+// use it: it permits dialing loopback and private ranges, which exists for
+// integration tests and explicitly trusted private deployments.
+func AllowPrivateEgress() Option {
+	return func(s *Service) {
+		s.allowPrivate = true
+		s.dialer = &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+		s.HTTP.Transport = &http.Transport{
+			DialContext:           s.dialer.DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 20 * time.Second,
+			MaxIdleConns:          50,
+		}
+	}
+}
+
+// New constructs the agent service with an SSRF-safe HTTP client that only
+// reaches public internet addresses.
+func New(st *store.Store, meter *metering.Service, opts ...Option) *Service {
+	dialer := netguard.SafeDialer()
+	s := &Service{
 		Store:    st,
 		Metering: meter,
-		HTTP: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(r *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return errors.New("too many redirects")
-			}
-			return nil
-		}},
+		tunnels:  make(chan struct{}, maxConcurrentTunnels),
+		dialer:   dialer,
+		HTTP: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				DialContext:           dialer.DialContext,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ResponseHeaderTimeout: 20 * time.Second,
+				MaxIdleConns:          50,
+			},
+			CheckRedirect: func(r *http.Request, via []*http.Request) error {
+				if len(via) >= 5 {
+					return errors.New("too many redirects")
+				}
+				return nil
+			},
+		},
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// jsonError writes a properly encoded JSON error (no string concatenation).
+func jsonError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 // authenticate resolves the signed headers to an active session owned by
@@ -76,24 +139,36 @@ func (s *Service) authenticate(r *http.Request, parts ...string) (*store.Session
 func (s *Service) FetchHandler(w http.ResponseWriter, r *http.Request) {
 	target := r.URL.Query().Get("url")
 	if _, err := url.ParseRequestURI(target); err != nil || (!strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://")) {
-		http.Error(w, `{"error":"valid http(s) url query parameter required"}`, http.StatusBadRequest)
+		jsonError(w, http.StatusBadRequest, "valid http(s) url query parameter required")
 		return
 	}
+	// Authenticate before revealing any destination policy, then enforce the
+	// SSRF guard; the dialer Control hook re-validates at connect time.
 	session, err := s.authenticate(r, http.MethodGet, target)
 	if err != nil {
-		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusUnauthorized)
+		jsonError(w, http.StatusUnauthorized, err.Error())
 		return
+	}
+	if !s.allowPrivate {
+		if err := netguard.CheckHost(target); err != nil {
+			jsonError(w, http.StatusForbidden, err.Error())
+			return
+		}
 	}
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target, nil)
 	if err != nil {
-		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.Header.Set("User-Agent", "dmesh-agent/2.0")
 	resp, err := s.HTTP.Do(req)
 	if err != nil {
-		http.Error(w, `{"error":"upstream failure: `+err.Error()+`"}`, http.StatusBadGateway)
+		if errors.Is(err, netguard.ErrBlockedDestination) {
+			jsonError(w, http.StatusForbidden, netguard.ErrBlockedDestination.Error())
+			return
+		}
+		jsonError(w, http.StatusBadGateway, "upstream failure: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -103,12 +178,12 @@ func (s *Service) FetchHandler(w http.ResponseWriter, r *http.Request) {
 	const maxBufferedFetch = 25 << 20
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBufferedFetch+1))
 	if err != nil {
-		http.Error(w, `{"error":"upstream read failure"}`, http.StatusBadGateway)
+		jsonError(w, http.StatusBadGateway, "upstream read failure")
 		return
 	}
 	if len(body) > maxBufferedFetch {
-		http.Error(w, `{"error":"response exceeds 25MB fetch cap, use the CONNECT proxy for large streams"}`,
-			http.StatusRequestEntityTooLarge)
+		jsonError(w, http.StatusRequestEntityTooLarge,
+			"response exceeds 25MB fetch cap, use the CONNECT proxy for large streams")
 		return
 	}
 
@@ -119,7 +194,7 @@ func (s *Service) FetchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.Metering.Submit(session, session.ClientAddress,
 		baseUp+int64(len(target)), baseDown+int64(len(body))); err != nil {
-		http.Error(w, `{"error":"metering rejected: `+err.Error()+`"}`, http.StatusConflict)
+		jsonError(w, http.StatusConflict, "metering rejected: "+err.Error())
 		return
 	}
 
@@ -137,33 +212,55 @@ func (s *Service) ConnectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	session, err := s.authenticate(r, http.MethodConnect, host)
 	if err != nil {
-		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusUnauthorized)
+		jsonError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	dialer := &net.Dialer{Timeout: 15 * time.Second}
-	upstream, err := dialer.DialContext(context.Background(), "tcp", host)
+	if !s.allowPrivate {
+		if err := netguard.CheckHost(host); err != nil {
+			jsonError(w, http.StatusForbidden, err.Error())
+			return
+		}
+	}
+
+	// Acquire a tunnel slot or fail fast under load.
+	select {
+	case s.tunnels <- struct{}{}:
+		defer func() { <-s.tunnels }()
+	default:
+		jsonError(w, http.StatusServiceUnavailable, "proxy at capacity, retry shortly")
+		return
+	}
+
+	upstream, err := s.dialer.DialContext(context.Background(), "tcp", host)
 	if err != nil {
-		http.Error(w, `{"error":"connect failed: `+err.Error()+`"}`, http.StatusBadGateway)
+		if errors.Is(err, netguard.ErrBlockedDestination) {
+			jsonError(w, http.StatusForbidden, netguard.ErrBlockedDestination.Error())
+			return
+		}
+		jsonError(w, http.StatusBadGateway, "connect failed: "+err.Error())
 		return
 	}
 	hj, ok := w.(http.Hijacker)
 	if !ok {
-		http.Error(w, `{"error":"hijacking unsupported"}`, http.StatusInternalServerError)
+		_ = upstream.Close()
+		jsonError(w, http.StatusInternalServerError, "hijacking unsupported")
 		return
 	}
 	client, _, err := hj.Hijack()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		_ = upstream.Close()
+		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer client.Close()
 	defer upstream.Close()
 	_, _ = client.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
 
-	counter := &countingConn{Conn: client}
+	counter := &countingConn{idleConn: newIdleConn(client)}
+	tunnelUpstream := newIdleConn(upstream)
 	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(upstream, counter); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(client, upstream); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(tunnelUpstream, counter); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(client, tunnelUpstream); done <- struct{}{} }()
 	<-done
 	<-done
 
@@ -178,20 +275,43 @@ func (s *Service) ConnectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-type countingConn struct {
+// idleConn resets an activity deadline on every read/write so a stalled peer
+// cannot hold a tunnel (and its slot) open indefinitely.
+type idleConn struct {
 	net.Conn
+}
+
+func newIdleConn(c net.Conn) *idleConn {
+	_ = c.SetDeadline(time.Now().Add(tunnelIdleTimeout))
+	return &idleConn{c}
+}
+
+func (c *idleConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	_ = c.Conn.SetDeadline(time.Now().Add(tunnelIdleTimeout))
+	return n, err
+}
+
+func (c *idleConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	_ = c.Conn.SetDeadline(time.Now().Add(tunnelIdleTimeout))
+	return n, err
+}
+
+type countingConn struct {
+	*idleConn
 	read    int64
 	written int64
 }
 
 func (c *countingConn) Read(p []byte) (int, error) {
-	n, err := c.Conn.Read(p)
+	n, err := c.idleConn.Read(p)
 	c.read += int64(n)
 	return n, err
 }
 
 func (c *countingConn) Write(p []byte) (int, error) {
-	n, err := c.Conn.Write(p)
+	n, err := c.idleConn.Write(p)
 	c.written += int64(n)
 	return n, err
 }

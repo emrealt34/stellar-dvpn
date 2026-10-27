@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -40,6 +41,8 @@ func main() {
 		err = keygen()
 	case "register":
 		err = register(args)
+	case "verify-node":
+		err = verifyNode(args)
 	case "heartbeat":
 		err = heartbeat(args)
 	case "nodes":
@@ -72,7 +75,8 @@ Commands:
   register   --coordinator URL --secret S... [--geo-country FILE --geo-asn FILE] [--tier res|dc --country-iso TR --country Turkiye --asn 9121 --asn-org "Turk Telekom"] [--payout ADDR] [--ip 1.2.3.4]
   heartbeat  --coordinator URL --secret S... --up N --down N
   nodes      --coordinator URL             Public node directory
-  session    --coordinator URL --secret S... --node G... --token C/G... [--ttl 3600] [--open]
+  verify-node --coordinator URL --secret S... --mesh G... --ip 1.2.3.4 [--geo-country F --geo-asn F]
+  session    --coordinator URL --secret S... --node G... --token C/G... [--node-ip 1.2.3.4] [--ttl 3600] [--open]
   counters   --coordinator URL --secret S... --nonce HEX --up N --down N
   settle     --rpc URL --secret S... --contract C... --id 123 --up N --down N --role client|node [--coordinator URL --nonce HEX]
   cancel     --rpc URL --secret S... --contract C... --id 123 --as-node [--coordinator URL --nonce HEX]
@@ -175,6 +179,78 @@ func register(args []string) error {
 	return printJSON(out)
 }
 
+// tierAgreement is the result of independently re-classifying a node endpoint.
+type tierAgreement struct {
+	Mesh            string `json:"mesh_address"`
+	ClaimedTier     string `json:"claimed_tier"`
+	ObservedTier    string `json:"observed_tier"`
+	ClaimedCountry  string `json:"claimed_country_iso"`
+	ObservedCountry string `json:"observed_country_iso"`
+	Agree           bool   `json:"agree"`
+}
+
+// classifyIP runs the same deterministic geo classification the node itself
+// uses, so the two peers independently derive the same tier from one IP.
+func classifyIP(ipStr, countryDB, asnDB string) (geo.Info, error) {
+	ip := net.ParseIP(strings.TrimSpace(ipStr))
+	if ip == nil {
+		return geo.Info{}, fmt.Errorf("invalid IP %q", ipStr)
+	}
+	lookup, err := geo.Open(countryDB, asnDB)
+	if err != nil {
+		return geo.Info{}, err
+	}
+	defer lookup.Close()
+	return lookup.Lookup(ip)
+}
+
+// verifyNode independently classifies the node's endpoint and compares it with
+// the node's signed directory claim. The coordinator is not involved in the
+// decision — it only served the claim — so the two clients must agree.
+func verifyNode(args []string) error {
+	fs := flag.NewFlagSet("verify-node", flag.ContinueOnError)
+	coordinator := fs.String("coordinator", os.Getenv("DMESH_COORDINATOR"), "coordinator base URL")
+	secret := fs.String("secret", "", "S... secret seed (signs the read request)")
+	mesh := fs.String("mesh", "", "node G address to verify")
+	nodeIP := fs.String("ip", "", "the node endpoint's public IP as observed by this client")
+	geoCountry := fs.String("geo-country", os.Getenv("GEO_COUNTRY_DB"), "path to GeoLite2-Country.mmdb")
+	geoASN := fs.String("geo-asn", os.Getenv("GEO_ASN_DB"), "path to GeoLite2-ASN.mmdb")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *mesh == "" || *nodeIP == "" {
+		return errors.New("--mesh and --ip are required")
+	}
+	c, err := newClient(*coordinator, *secret)
+	if err != nil {
+		return err
+	}
+	claim, err := c.NodeByMesh(*mesh)
+	if err != nil {
+		return err
+	}
+	observed, err := classifyIP(*nodeIP, *geoCountry, *geoASN)
+	if err != nil {
+		return err
+	}
+	result := tierAgreement{
+		Mesh:            claim.MeshAddress,
+		ClaimedTier:     claim.Tier,
+		ObservedTier:    string(observed.Tier),
+		ClaimedCountry:  claim.CountryISO,
+		ObservedCountry: observed.CountryISO,
+		Agree:           claim.Tier == string(observed.Tier),
+	}
+	if !result.Agree {
+		if err := printJSON(result); err != nil {
+			return err
+		}
+		return fmt.Errorf("tier disagreement: node claims %q but independent classification is %q — refusing to trust the node",
+			result.ClaimedTier, result.ObservedTier)
+	}
+	return printJSON(result)
+}
+
 func heartbeat(args []string) error {
 	fs := flag.NewFlagSet("heartbeat", flag.ContinueOnError)
 	coordinator := fs.String("coordinator", os.Getenv("DMESH_COORDINATOR"), "coordinator base URL")
@@ -225,12 +301,33 @@ func session(args []string) error {
 	ttl := fs.Uint64("ttl", 0, "TTL seconds (default set by coordinator)")
 	open := fs.Bool("open", false, "also sign and submit the on-chain open_session")
 	rpcURL := fs.String("rpc", os.Getenv("DMESH_RPC"), "Soroban RPC URL for --open")
+	nodeIP := fs.String("node-ip", "", "node endpoint public IP: independently verify its tier before opening a session")
+	geoCountry := fs.String("geo-country", os.Getenv("GEO_COUNTRY_DB"), "path to GeoLite2-Country.mmdb")
+	geoASN := fs.String("geo-asn", os.Getenv("GEO_ASN_DB"), "path to GeoLite2-ASN.mmdb")
+	allowMismatch := fs.Bool("allow-tier-mismatch", false, "proceed even if the independent tier check disagrees")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	c, err := newClient(*coordinator, *secret)
 	if err != nil {
 		return err
+	}
+	// Client-to-client agreement: re-derive the node's tier from its endpoint
+	// IP rather than trusting the directory claim or the coordinator.
+	if *nodeIP != "" {
+		claim, err := c.NodeByMesh(*node)
+		if err != nil {
+			return err
+		}
+		observed, err := classifyIP(*nodeIP, *geoCountry, *geoASN)
+		if err != nil {
+			return err
+		}
+		if claim.Tier != string(observed.Tier) && !*allowMismatch {
+			return fmt.Errorf("tier disagreement: directory says %q, independent check of %s says %q (refusing; pass --allow-tier-mismatch to override)",
+				claim.Tier, *nodeIP, observed.Tier)
+		}
+		fmt.Fprintf(os.Stderr, "tier check: agreement on %q (%s)\n", observed.Tier, observed.CountryName)
 	}
 	coordinated, err := c.CoordinateSession(*node, *token, *ttl)
 	if err != nil {

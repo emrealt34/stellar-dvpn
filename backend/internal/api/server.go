@@ -20,15 +20,16 @@ import (
 
 // Server wires coordinator services together.
 type Server struct {
-	Cfg      *config.Config
-	Store    *store.Store
-	Soroban  *soroban.Client
-	Settle   *soroban.Settlement // nil until SETTLEMENT_CONTRACT_ID is set
-	Metering *metering.Service
-	Agent    *agent.Service
-	Sender   auth.Sender
-	limiter  *rateLimiter
-	devCodes map[string]string
+	Cfg       *config.Config
+	Store     *store.Store
+	Soroban   *soroban.Client
+	Settle    *soroban.Settlement // nil until SETTLEMENT_CONTRACT_ID is set
+	Metering  *metering.Service
+	Agent     *agent.Service
+	Sender    auth.Sender
+	limiter   *rateLimiter // per email, bounds OTP requests per inbox
+	ipLimiter *rateLimiter // per source IP, bounds OTP requests across inboxes
+	devCodes  map[string]string
 }
 
 // New constructs the HTTP handler. The coordinator performs no geo/IP
@@ -37,15 +38,16 @@ func New(cfg *config.Config, st *store.Store,
 	sorobanClient *soroban.Client, settle *soroban.Settlement,
 	meter *metering.Service, ag *agent.Service, sender auth.Sender) http.Handler {
 	s := &Server{
-		Cfg:      cfg,
-		Store:    st,
-		Soroban:  sorobanClient,
-		Settle:   settle,
-		Metering: meter,
-		Agent:    ag,
-		Sender:   sender,
-		limiter:  newRateLimiter(3, 10*time.Minute),
-		devCodes: map[string]string{},
+		Cfg:       cfg,
+		Store:     st,
+		Soroban:   sorobanClient,
+		Settle:    settle,
+		Metering:  meter,
+		Agent:     ag,
+		Sender:    sender,
+		limiter:   newRateLimiter(3, 10*time.Minute),
+		ipLimiter: newRateLimiter(10, 10*time.Minute),
+		devCodes:  map[string]string{},
 	}
 	go s.maintenanceLoop()
 
@@ -86,22 +88,33 @@ func New(cfg *config.Config, st *store.Store,
 	return cors(mux)
 }
 
+// maxJSONBody caps every request body at 1 MiB; the JSON API never needs
+// more, and this prevents oversized-payload memory abuse. CONNECT tunnels are
+// hijacked after the headers and are unaffected.
+const maxJSONBody int64 = 1 << 20
+
 // cors allows browser-based clients (the web UI) to read the public,
 // non-custodial API. All mutating calls require Stellar-signed headers rather
 // than ambient credentials, so a wildcard origin is safe here.
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", strings.Join([]string{
+		h := w.Header()
+		h.Set("Access-Control-Allow-Origin", "*")
+		h.Set("Access-Control-Allow-Methods", strings.Join([]string{"GET", "POST", "OPTIONS"}, ", "))
+		h.Set("Access-Control-Allow-Headers", strings.Join([]string{
 			meshauth.HeaderAddress, meshauth.HeaderTimestamp,
 			meshauth.HeaderSignature, meshauth.HeaderSession, "Content-Type",
 		}, ", "))
-		w.Header().Set("Access-Control-Max-Age", "86400")
+		h.Set("Access-Control-Max-Age", "86400")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
 		next.ServeHTTP(w, r)
 	})
 }

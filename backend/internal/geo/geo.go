@@ -1,6 +1,8 @@
 // Package geo determines the physical country and network tier (residential
-// vs datacenter) of an IP address. This decision is made exclusively on the
-// backend from databases refreshed daily by CI; clients never self-report.
+// vs datacenter) of an IP address. Both node and consuming client run this
+// same, deterministic classification locally against the CI-published GeoLite2
+// databases so the two peers independently agree on the tier. The coordinator
+// does not classify anything; it only stores the node's signed claim.
 package geo
 
 import (

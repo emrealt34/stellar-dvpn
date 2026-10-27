@@ -100,7 +100,26 @@ rate change is permanently auditable on-chain.
 | Bytes billed | dual Stellar authorization in `confirm_settlement` |
 | Price/tier | contract storage + change events |
 | Fee goes to protocol | hard-coded 2000 bps split in contract |
-| Node location/type | node client classifies locally against the CI-published geo DB and signs it; coordinator stores the claim |
+| Node location/type | node client classifies locally against the CI-published geo DB and signs it; the consuming client independently re-classifies the node's endpoint IP and must agree before opening a session; coordinator stores the claim |
 | No double spend | settled flag + unique nonce, enforced by contract |
+| Proxy destination safety | `internal/netguard` restricts agent egress to public IPs, enforced by a dialer hook at connect time |
+
+### Client-to-client tier agreement
+
+The coordinator never decides residential vs datacenter. Both peers run the
+same deterministic classifier (`internal/geo`) against the same CI-published
+GeoLite2 databases. A client verifies a node with `dmesh verify-node --mesh
+G... --ip <node-endpoint-ip>` or passes `--node-ip` to `dmesh session`; a
+tier mismatch refuses the session unless the client explicitly overrides it.
+The backend is limited to signaling (relaying session messages) and node
+liveness/heartbeat storage.
+
+### Hardened agent proxy
+
+`/api/v1/agent/fetch` and `/api/v1/agent/connect` are SSRF-safe (no loopback,
+RFC1918, link-local/metadata, multicast or unspecified destinations), cap
+concurrent tunnels, close idle connections, bound request bodies and return
+structured JSON errors. See [`docs/AGENT_API.md`](docs/AGENT_API.md) and
+[`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md).
 | Funds safety | allowances only; contract holds no balance, no keys |
 | Crash recovery | TTL expiry; unconfirmed sessions never draw funds |

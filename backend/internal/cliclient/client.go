@@ -148,6 +148,43 @@ func (c *Client) EchoIP() (string, error) {
 	return out.IP, nil
 }
 
+// DirectoryNode is the public, signed node record returned by the directory.
+type DirectoryNode struct {
+	MeshAddress   string `json:"mesh_address"`
+	PayoutAddress string `json:"payout_address"`
+	CountryISO    string `json:"country_iso"`
+	Country       string `json:"country"`
+	Tier          string `json:"tier"`
+	ASNOrg        string `json:"asn_org"`
+	IsDatacenter  bool   `json:"is_datacenter"`
+	LastSeen      string `json:"last_seen"`
+}
+
+// Nodes returns the public node directory.
+func (c *Client) Nodes() ([]DirectoryNode, error) {
+	var out struct {
+		Nodes []DirectoryNode `json:"nodes"`
+	}
+	if err := c.do(http.MethodGet, "/api/v1/nodes", nil, http.Header{}, &out); err != nil {
+		return nil, err
+	}
+	return out.Nodes, nil
+}
+
+// NodeByMesh fetches one node's signed claim from the directory by address.
+func (c *Client) NodeByMesh(mesh string) (*DirectoryNode, error) {
+	nodes, err := c.Nodes()
+	if err != nil {
+		return nil, err
+	}
+	for i := range nodes {
+		if nodes[i].MeshAddress == mesh {
+			return &nodes[i], nil
+		}
+	}
+	return nil, fmt.Errorf("node %s is not in the public directory", mesh)
+}
+
 // Heartbeat refreshes liveness and cumulative traffic counters.
 func (c *Client) Heartbeat(up, down int64) error {
 	headers, err := c.signedHeaders("heartbeat")
@@ -160,9 +197,9 @@ func (c *Client) Heartbeat(up, down int64) error {
 
 // CoordinateResponse is the coordinator's answer to a session request.
 type CoordinateResponse struct {
-	Session        map[string]any `json:"session"`
+	Session         map[string]any `json:"session"`
 	OpenSessionArgs map[string]any `json:"open_session_args"`
-	NextStep       string         `json:"next_step"`
+	NextStep        string         `json:"next_step"`
 }
 
 // CoordinateSession asks the coordinator for a session nonce and contract args.

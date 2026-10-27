@@ -22,6 +22,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if err := cfg.ValidateProduction(); err != nil {
+		log.Fatalf("configuration: %v", err)
+	}
 
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
@@ -62,6 +65,8 @@ func main() {
 		Addr:              cfg.Addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 15 * time.Second,
+		ReadTimeout:       60 * time.Second, // CONNECT tunnels are hijacked and exempt
+		IdleTimeout:       120 * time.Second,
 	}
 	go func() {
 		log.Printf("dmesh coordinator listening on %s", cfg.Addr)

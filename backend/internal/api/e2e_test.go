@@ -64,7 +64,9 @@ func newTestServer(t *testing.T) (string, *store.Store) {
 	cfg.MaxBandwidthBps = 1_500_000_000
 
 	meter := metering.New(st, cfg.MaxBandwidthBps)
-	agentSvc := agent.New(st, meter)
+	// Integration tests target loopback httptest servers; production keeps the
+	// SSRF guard on by constructing agent.New without options.
+	agentSvc := agent.New(st, meter, agent.AllowPrivateEgress())
 	handler := api.New(cfg, st, nil, nil, meter, agentSvc, auth.ConsoleSender{})
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
@@ -74,12 +76,12 @@ func newTestServer(t *testing.T) (string, *store.Store) {
 // nodeProfile is the client-derived, signed geo/tier claim a node registers.
 // The coordinator no longer performs any IP geo lookup.
 type nodeProfile struct {
-	Tier     string
+	Tier        string
 	CountryISO  string
 	CountryName string
-	ASN      uint
-	ASNOrg   string
-	Payout   string
+	ASN         uint
+	ASNOrg      string
+	Payout      string
 }
 
 func defaultProfile() nodeProfile {
@@ -459,5 +461,33 @@ func TestNodeRegistrationPayoutAddress(t *testing.T) {
 	if status, _ = doJSON(t, http.MethodPost, url+"/api/v1/nodes/register",
 		bad.body(), bad.headers(t, badSigner)); status != http.StatusBadRequest {
 		t.Fatalf("invalid payout charset should be 400, got %d", status)
+	}
+}
+
+func TestSecurityHeadersAndBodyLimit(t *testing.T) {
+	url, _ := newTestServer(t)
+
+	resp, err := http.Get(url + "/api/v1/nodes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	for _, h := range []string{"X-Content-Type-Options", "X-Frame-Options", "Referrer-Policy", "Content-Security-Policy"} {
+		if resp.Header.Get(h) == "" {
+			t.Errorf("missing security header %s", h)
+		}
+	}
+
+	// An oversized JSON body is rejected by the 1 MiB limit rather than buffered.
+	big := bytes.Repeat([]byte("a"), (1<<20)+1024)
+	req, _ := http.NewRequest(http.MethodPost, url+"/api/v1/dashboard/otp/request", bytes.NewReader(big))
+	req.Header.Set("Content-Type", "application/json")
+	rec, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rec.Body.Close()
+	if rec.StatusCode == http.StatusOK {
+		t.Fatalf("oversized body must not be accepted, got %d", rec.StatusCode)
 	}
 }

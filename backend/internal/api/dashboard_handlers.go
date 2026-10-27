@@ -33,7 +33,8 @@ func (s *Server) requestOTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("valid email required"))
 		return
 	}
-	if !s.limiter.allow(email) {
+	ip := clientIP(r).String()
+	if !s.ipLimiter.allow(ip) || !s.limiter.allow(email) {
 		writeError(w, http.StatusTooManyRequests, errors.New("too many OTP requests, try later"))
 		return
 	}

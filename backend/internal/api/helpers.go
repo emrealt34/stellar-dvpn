@@ -31,28 +31,24 @@ func isSafeAddress(s string) bool {
 	return true
 }
 
-// clientIP extracts the peer IP, honouring a single X-Forwarded-For hop only
-// when the request is loopback (i.e. behind our own reverse proxy).
+// clientIP extracts the client IP as seen by the platform reverse proxy.
+// Render (and similar hosts) terminate TLS and set X-Forwarded-For to the real
+// peer, so the first XFF entry is preferred. This value is not a trust
+// boundary: node geo/tier claims are self-derived and Stellar-signed, and the
+// stored IP is never exposed in the public directory.
 func clientIP(r *http.Request) net.IP {
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-				if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
-					if parsed := net.ParseIP(first); parsed != nil {
-						return parsed
-					}
-				}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
+			if parsed := net.ParseIP(first); parsed != nil {
+				return parsed
 			}
 		}
-		if ip := net.ParseIP(host); ip != nil {
-			return ip
-		}
 	}
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return net.ParseIP(r.RemoteAddr)
+		host = r.RemoteAddr
 	}
-	return net.ParseIP(ip)
+	return net.ParseIP(host)
 }
 
 // rateLimiter is a tiny per-key sliding-window limiter for OTP endpoints.

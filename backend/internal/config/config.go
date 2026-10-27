@@ -2,12 +2,28 @@
 package config
 
 import (
+	"errors"
 	"log"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// defaultJWTSecret is the documented local-development placeholder. It must
+// never be accepted in a production (non-dev) deployment.
+const defaultJWTSecret = "change-me-in-production-32-bytes-minimum-secret"
+
+// ValidateProduction fails fast when the service starts without a real JWT
+// secret while dev OTP codes are disabled. A predictable secret would let an
+// attacker forge dashboard tokens.
+func (c *Config) ValidateProduction() error {
+	secret := strings.TrimSpace(string(c.JWTSecret))
+	if !c.DevCodes && (secret == "" || secret == defaultJWTSecret || len(secret) < 32) {
+		return errors.New("JWT_SECRET must be set to a random value of at least 32 bytes when DEV_OTP_CODES is false")
+	}
+	return nil
+}
 
 type Config struct {
 	Addr              string
@@ -69,7 +85,7 @@ func Load() *Config {
 	return &Config{
 		Addr:                 addr,
 		DBPath:               env("DB_PATH", "data/dmesh.db"),
-		JWTSecret:            []byte(env("JWT_SECRET", "change-me-in-production-32-bytes-minimum-secret")),
+		JWTSecret:            []byte(env("JWT_SECRET", defaultJWTSecret)),
 		HorizonURL:           env("HORIZON_URL", "https://horizon-testnet.stellar.org"),
 		SorobanRPCURL:        env("SOROBAN_RPC_URL", "https://soroban-testnet.stellar.org"),
 		NetworkPassphrase:    env("NETWORK_PASSPHRASE", "Test SDF Network ; September 2015"),
