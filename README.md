@@ -101,6 +101,23 @@ dmesh register --coordinator "$URL" --secret "$S" \
 cd web && npm ci && npm run dev
 ```
 
+## Documentation
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — trust model, components, client-to-client tier agreement
+- [`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md) — severity-classified findings and fixes
+- [`docs/AGENT_API.md`](docs/AGENT_API.md) — signed, metered proxy for agents/scrapers
+- [`SECURITY.md`](SECURITY.md) — reporting, secret handling, advisory list
+- [`docs/DEPENDENCIES.md`](docs/DEPENDENCIES.md) — dependency and vulnerability report
+
+A client never trusts the backend for geography: it independently classifies a
+node's endpoint IP and must agree on the tier before opening a session
+(`dmesh verify-node`, or `dmesh session --node-ip <ip>`).
+
+> **Deployment note:** the coordinator stores registry/session state in SQLite.
+> On an ephemeral host (e.g. a free tier without a persistent disk) the
+> database resets on redeploy; attach a persistent volume or point
+> `DMESH_DB_PATH` at durable storage for a standing testnet.
+
 <details>
 <summary><strong>Dependency & vulnerability report</strong></summary>
 
