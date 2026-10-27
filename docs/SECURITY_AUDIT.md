@@ -28,6 +28,7 @@ custody or fund theft. Scans (`govulncheck`, `npm audit`, `gitleaks`,
 | A-1 | Low | Signed mesh requests have a 5-minute validity window and no server-side nonce store, so a captured request can be replayed within the window. | All signed operations are idempotent or monotonic: registration is an upsert, counters only increase, and settlement is enforced by the on-chain nonce/replay guard. A nonce cache can be added if stricter transport semantics are needed. |
 | A-2 | Informational | CORS is `Access-Control-Allow-Origin: *`. | Authentication uses Stellar-signed headers, never cookies or ambient credentials, so a wildcard origin cannot authorize anything without the caller's secret key. |
 | A-3 | Informational | `GO-2026-4316` in transitive `go-chi/chi v4` (via the Stellar SDK). | The vulnerable `RedirectSlashes` symbol is outside the call graph and chi v4 has no patched release; tracked in `SECURITY.md` and the govulncheck job is advisory. |
+| A-4 | Informational | `RUSTSEC-2026-0387`: timing variability in transitive `crypto-bigint 0.5.5` (via `soroban-sdk`), fixed in 0.7.6. | The contract performs no private-key or constant-time operations — signing happens off-chain — so the side channel is not reachable in our code; a fix requires a future `soroban-sdk` upgrade. The `cargo audit` job is non-blocking and tracks it. |
 
 ## Implemented controls (roadmap items)
 
