@@ -1,26 +1,60 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	"dmesh/internal/geo"
 	"dmesh/internal/meshauth"
 	"dmesh/internal/store"
 )
 
+// maxPayoutAddressLen bounds the optional node payout address (a Monero/XMR
+// address is at most 106 characters; allow headroom for other networks).
+const maxPayoutAddressLen = 120
+
 // registerNode registers a mesh node. The only identity is the Stellar G
 // address; the geo classification (country, residential/datacenter tier) is
 // derived here from the peer IP using the CI-refreshed geo databases.
 func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
+
+	// Optional body: the node's payout address. It is metadata only — dmesh
+	// settlement still happens in Stellar assets; no custodial payout is
+	// performed by the coordinator.
+	var body struct {
+		PayoutAddress string `json:"payout_address"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+	payout := strings.TrimSpace(body.PayoutAddress)
+	if len(payout) > maxPayoutAddressLen {
+		writeError(w, http.StatusBadRequest, errPayoutTooLong)
+		return
+	}
+	if payout != "" && !isSafeAddress(payout) {
+		writeError(w, http.StatusBadRequest, errPayoutBadChars)
+		return
+	}
+
 	// The signed payload intentionally excludes the IP: a client cannot know
 	// its NAT-external address, while the server derives it from the transport
-	// and never trusts a client claim.
+	// and never trusts a client claim. The payout address, when present, is
+	// included in the signed payload so it cannot be tampered in transit.
+	signedParts := []string{"register"}
+	if payout != "" {
+		signedParts = append(signedParts, payout)
+	}
 	req, err := meshauth.ParseSigned(
 		r.Header.Get(meshauth.HeaderAddress),
 		r.Header.Get(meshauth.HeaderTimestamp),
 		r.Header.Get(meshauth.HeaderSignature),
-		"register")
+		signedParts...)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err)
 		return
@@ -35,13 +69,14 @@ func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	node, err := s.Store.UpsertNode(&store.Node{
-		MeshAddress: req.Address,
-		CountryISO:  info.CountryISO,
-		CountryName: info.CountryName,
-		ASN:         info.ASN,
-		ASNOrg:      info.ASNOrg,
-		Tier:        string(info.Tier),
-		IP:          ip.String(),
+		MeshAddress:   req.Address,
+		PayoutAddress: payout,
+		CountryISO:    info.CountryISO,
+		CountryName:   info.CountryName,
+		ASN:           info.ASN,
+		ASNOrg:        info.ASNOrg,
+		Tier:          string(info.Tier),
+		IP:            ip.String(),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -94,6 +129,7 @@ func (s *Server) listNodes(w http.ResponseWriter, _ *http.Request) {
 	for _, n := range nodes {
 		public = append(public, map[string]any{
 			"mesh_address":   n.MeshAddress,
+			"payout_address": n.PayoutAddress,
 			"country_iso":    n.CountryISO,
 			"country":        n.CountryName,
 			"tier":           n.Tier,

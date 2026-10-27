@@ -23,10 +23,11 @@ type Store struct{ db *sql.DB }
 
 // Node is a mesh participant identified solely by its Stellar G address.
 type Node struct {
-	ID          int64     `json:"id"`
-	MeshAddress string    `json:"mesh_address"` // G... address, the only identity required
-	Email       string    `json:"email,omitempty"` // optional, linked via dashboard OTP
-	CountryISO  string    `json:"country_iso"`
+	ID            int64     `json:"id"`
+	MeshAddress   string    `json:"mesh_address"` // G... address, the only identity required
+	Email         string    `json:"email,omitempty"` // optional, linked via dashboard OTP
+	PayoutAddress string    `json:"payout_address,omitempty"` // optional node payout address (e.g. Monero/XMR); metadata only
+	CountryISO    string    `json:"country_iso"`
 	CountryName string    `json:"country"`
 	ASN         uint      `json:"asn"`
 	ASNOrg      string    `json:"asn_org"`
@@ -107,6 +108,7 @@ CREATE TABLE IF NOT EXISTS nodes (
 	id            INTEGER PRIMARY KEY AUTOINCREMENT,
 	mesh_address  TEXT NOT NULL UNIQUE,
 	email         TEXT NOT NULL DEFAULT '',
+	payout_address TEXT NOT NULL DEFAULT '',
 	country_iso   TEXT NOT NULL DEFAULT '',
 	country_name  TEXT NOT NULL DEFAULT '',
 	asn           INTEGER NOT NULL DEFAULT 0,
@@ -128,7 +130,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 	tier                TEXT NOT NULL,
 	nonce_hex           TEXT NOT NULL UNIQUE,
 	expires_at          TIMESTAMP NOT NULL,
-	status              TEXT NOT NULL DEFAULT 'opened',
+	status              TEXT NOT NULL DEFAULT 'pending',
 	up_bytes            INTEGER NOT NULL DEFAULT 0,
 	down_bytes          INTEGER NOT NULL DEFAULT 0,
 	tx_open             TEXT NOT NULL DEFAULT '',
@@ -163,7 +165,40 @@ CREATE TABLE IF NOT EXISTS settings (
 	value TEXT NOT NULL
 );
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	// Forward migration for databases created before payout_address existed.
+	if ok, err := s.columnExists("nodes", "payout_address"); err != nil {
+		return err
+	} else if !ok {
+		if _, err := s.db.Exec(`ALTER TABLE nodes ADD COLUMN payout_address TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// columnExists reports whether a table currently has a given column.
+func (s *Store) columnExists(table, column string) (bool, error) {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // ---------------------------------------------------------------------------
@@ -193,12 +228,12 @@ func (s *Store) SetSetting(key, value string) error {
 // ---------------------------------------------------------------------------
 
 const nodeColumns = `id, mesh_address, COALESCE(email,''), country_iso, country_name, asn, asn_org, tier, ip, status,
-	up_bytes, down_bytes, last_seen, created_at`
+	up_bytes, down_bytes, last_seen, created_at, COALESCE(payout_address,'')`
 
 func scanNode(row interface{ Scan(...any) error }) (*Node, error) {
 	var n Node
 	err := row.Scan(&n.ID, &n.MeshAddress, &n.Email, &n.CountryISO, &n.CountryName, &n.ASN, &n.ASNOrg,
-		&n.Tier, &n.IP, &n.Status, &n.UpBytes, &n.DownBytes, &n.LastSeen, &n.CreatedAt)
+		&n.Tier, &n.IP, &n.Status, &n.UpBytes, &n.DownBytes, &n.LastSeen, &n.CreatedAt, &n.PayoutAddress)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -210,13 +245,14 @@ func scanNode(row interface{ Scan(...any) error }) (*Node, error) {
 func (s *Store) UpsertNode(n *Node) (*Node, error) {
 	now := time.Now().UTC()
 	_, err := s.db.Exec(
-		`INSERT INTO nodes(mesh_address, country_iso, country_name, asn, asn_org, tier, ip, status, last_seen, created_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, 'online', ?, ?)
+		`INSERT INTO nodes(mesh_address, country_iso, country_name, asn, asn_org, tier, ip, status, last_seen, created_at, payout_address)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, 'online', ?, ?, ?)
 		 ON CONFLICT(mesh_address) DO UPDATE SET
 		   country_iso = excluded.country_iso, country_name = excluded.country_name,
 		   asn = excluded.asn, asn_org = excluded.asn_org, tier = excluded.tier,
-		   ip = excluded.ip, status = 'online', last_seen = excluded.last_seen`,
-		n.MeshAddress, n.CountryISO, n.CountryName, n.ASN, n.ASNOrg, n.Tier, n.IP, now, now)
+		   ip = excluded.ip, status = 'online', last_seen = excluded.last_seen,
+		   payout_address = COALESCE(NULLIF(excluded.payout_address, ''), nodes.payout_address)`,
+		n.MeshAddress, n.CountryISO, n.CountryName, n.ASN, n.ASNOrg, n.Tier, n.IP, now, now, n.PayoutAddress)
 	if err != nil {
 		return nil, err
 	}

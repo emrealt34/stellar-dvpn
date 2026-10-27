@@ -16,6 +16,26 @@ import (
 var errGeoUnavailable = errors.New(
 	"geo databases are not installed on this coordinator; set GEO_COUNTRY_DB and GEO_ASN_DB from the CI-refreshed GeoLite2 files")
 
+var (
+	errPayoutTooLong  = errors.New("payout_address exceeds 120 characters")
+	errPayoutBadChars = errors.New("payout_address may contain only alphanumeric characters")
+)
+
+// isSafeAddress performs a conservative charset check on an optional payout
+// address. It is intentionally network-agnostic (Stellar G/C, Monero base58,
+// etc.); full per-network checksum validation belongs in the client/UI.
+func isSafeAddress(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
 // clientIP extracts the peer IP, honouring a single X-Forwarded-For hop only
 // when the request is loopback (i.e. behind our own reverse proxy).
 func clientIP(r *http.Request) net.IP {

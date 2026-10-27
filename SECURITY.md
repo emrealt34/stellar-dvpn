@@ -59,6 +59,24 @@ is enforced today and the remaining hardening roadmap.
 5. **Dashboard email.** Without SMTP configured, OTP codes are logged to the
    console (development only). Configure Cloudflare Email SMTP in production.
 
+## Payout addresses and cross-chain transfers (e.g. Monero/XMR)
+
+A node may register an optional `payout_address` (such as a Monero address).
+This is **metadata only**:
+
+- Stellar and Monero are separate ledgers. A Soroban contract cannot move XMR,
+  and there is no atomic, trustless Stellar→Monero instruction.
+- dmesh settlement therefore always occurs in Stellar assets through the
+  non-custodial allowance model. Automatically converting and paying out XMR
+  would require an independent payout service that holds funds — a deliberate
+  custodial trust addition that this project does not make by default.
+- A Monero address does not need any XMR balance to **receive** funds; receiving
+  has no minimum-balance requirement.
+- The trust-minimizing path is for nodes to receive Stellar assets and perform
+  any conversion themselves. A future optional, separately-audited payout relay
+  can consume the registered addresses, but it is outside the non-custodial
+  core and must be opted into explicitly.
+
 ## Reporting
 
 Report security issues privately to the repository maintainer rather than

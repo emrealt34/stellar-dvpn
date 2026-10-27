@@ -377,3 +377,48 @@ func mustJSON(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
 }
+
+func TestNodeRegistrationPayoutAddress(t *testing.T) {
+	url, _ := newTestServer(t, true)
+	node := newSigner(t)
+	const xmr = "44GxQp9vLtbxMj37NqfN8Wj5dr7G3QkP6m2RvS8tUaBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdefghij"
+
+	// Valid, signed payout address is stored and surfaced in the directory.
+	status, out := doJSON(t, http.MethodPost, url+"/api/v1/nodes/register",
+		map[string]any{"payout_address": xmr},
+		node.headers(t, "register", xmr))
+	if status != http.StatusOK {
+		t.Fatalf("register with payout address status=%d body=%v", status, out)
+	}
+	if got := out["node"].(map[string]any)["payout_address"]; got != xmr {
+		t.Fatalf("payout address not stored, got %v", got)
+	}
+
+	// Re-registering without the field must preserve the stored address.
+	if status, _ = doJSON(t, http.MethodPost, url+"/api/v1/nodes/register", nil,
+		node.headers(t, "register")); status != http.StatusOK {
+		t.Fatalf("plain re-register status=%d", status)
+	}
+	resp, err := http.Get(url + "/api/v1/nodes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var dir struct {
+		Nodes []map[string]any `json:"nodes"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&dir); err != nil {
+		t.Fatal(err)
+	}
+	if len(dir.Nodes) != 1 || dir.Nodes[0]["payout_address"] != xmr {
+		t.Fatalf("directory should retain payout address, got %+v", dir.Nodes)
+	}
+
+	// Disallowed characters are rejected.
+	bad := newSigner(t)
+	if status, _ = doJSON(t, http.MethodPost, url+"/api/v1/nodes/register",
+		map[string]any{"payout_address": "not-a-valid-address"},
+		bad.headers(t, "register", "not-a-valid-address")); status != http.StatusBadRequest {
+		t.Fatalf("invalid payout charset should be 400, got %d", status)
+	}
+}
