@@ -87,12 +87,10 @@ jobs:
       - name: Publish release
         run: |
           shopt -s globstar
+          NOTES="Non-custodial, Soroban-settled dmesh CLI client and coordinator daemon. Available now (CLI): Linux amd64/arm64 and Windows amd64. Roadmap (pending): macOS, Android, iOS, and the desktop GUI."
           gh release create "${GITHUB_REF_NAME}" \
             --title "dmesh ${GITHUB_REF_NAME}" \
-            --notes "Non-custodial, Soroban-settled dmesh CLI client and coordinator daemon.
-
-Available now (CLI): Linux (amd64/arm64) and Windows (amd64).
-Roadmap (pending): macOS, Android, iOS, and the desktop GUI." \
+            --notes "${NOTES}" \
             artifacts/**/*.tar.gz artifacts/**/*.sha256
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
