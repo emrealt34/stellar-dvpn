@@ -1,0 +1,31 @@
+{
+  "name": "dmesh — trustless decentralized bandwidth",
+  "short_name": "dmesh",
+  "description": "Decentralized VPN and paid agent API settled by a Soroban smart contract.",
+  "id": "/stellar-dvpn/",
+  "start_url": "/stellar-dvpn/",
+  "scope": "/stellar-dvpn/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/stellar-dvpn/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/stellar-dvpn/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/stellar-dvpn/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -18,6 +18,20 @@ const soon = ['Desktop GUI (Linux & Windows)', 'macOS', 'Android', 'iOS'];
       built and signed by CI. Verify the SHA-256 checksum after downloading.
     </p>
 
+    <div class="card install">
+      <div className="dl-icon"><Logo size={36} /></div>
+      <div>
+        <h3>Install the app</h3>
+        <p>
+          The web app is a Progressive Web App: open this page in Chrome, Edge or Safari and use
+          “Install” / “Add to Home Screen” to get a standalone dmesh app on Windows, Linux, macOS,
+          Android and iOS — with the same live network view and an offline app shell.
+        </p>
+      </div>
+      <a class="btn btn-primary" href="#top">Open app</a>
+    </div>
+
+    <h3 class="cli-head">Command line clients</h3>
     <div class="grid g3">
       {cli.map((c) => (
         <div class="card dl">
@@ -42,6 +56,23 @@ const soon = ['Desktop GUI (Linux & Windows)', 'macOS', 'Android', 'iOS'];
 </section>
 
 <style>
+  .install {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    margin-bottom: 32px;
+  }
+  .install .btn {
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+  .install p {
+    max-width: 640px;
+  }
+  .cli-head {
+    font-size: 19px;
+    margin: 0 0 16px;
+  }
   .dl {
     display: flex;
     flex-direction: column;
@@ -78,5 +109,14 @@ const soon = ['Desktop GUI (Linux & Windows)', 'macOS', 'Android', 'iOS'];
     border-radius: 980px;
     padding: 6px 14px;
     background: #fff;
+  }
+  @media (max-width: 760px) {
+    .install {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .install .btn {
+      margin-left: 0;
+    }
   }
 </style>
