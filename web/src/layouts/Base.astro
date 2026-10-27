@@ -31,7 +31,11 @@ const {
     <script is:inline>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register(import.meta.env.BASE_URL + 'sw.js').catch(() => {});
+          // document.baseURI already includes the /stellar-dvpn/ subpath, so
+          // this resolves correctly on GitHub Pages inside an inline script.
+          navigator.serviceWorker
+            .register(new URL('sw.js', document.baseURI))
+            .catch(() => {});
         });
       }
     </script>
