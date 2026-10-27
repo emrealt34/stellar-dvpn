@@ -52,3 +52,32 @@ func TestSafeDialerRefusesLocal(t *testing.T) {
 		t.Fatalf("expected blocked destination error, got %v", err)
 	}
 }
+
+func TestExitPolicyPorts(t *testing.T) {
+	blocked := []uint16{25, 465, 587, 135, 139, 445, 2049, 0}
+	for _, p := range blocked {
+		if err := CheckPort(p); err == nil {
+			t.Errorf("port %d must be blocked", p)
+		}
+	}
+	for _, p := range []uint16{80, 443, 8080, 8443, 53} {
+		if err := CheckPort(p); err != nil {
+			t.Errorf("port %d must be allowed, got %v", p, err)
+		}
+	}
+}
+
+func TestCheckHostPort(t *testing.T) {
+	// Blocked port on a public address.
+	if err := CheckHostPort("8.8.8.8:25"); err == nil {
+		t.Error("8.8.8.8:25 must be blocked")
+	}
+	// Private address on an allowed port.
+	if err := CheckHostPort("10.0.0.1:443"); err == nil {
+		t.Error("10.0.0.1:443 must be blocked")
+	}
+	// Public address without an explicit port is fine.
+	if err := CheckHostPort("8.8.8.8"); err != nil {
+		t.Errorf("8.8.8.8 should pass: %v", err)
+	}
+}

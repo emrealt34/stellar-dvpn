@@ -15,6 +15,31 @@ import (
 // ErrBlockedDestination is returned when a resolved peer address is not public.
 var ErrBlockedDestination = errors.New("netguard: destination resolves to a non-public address (private, loopback, link-local or metadata range)")
 
+// ErrBlockedPort is returned for ports the exit policy forbids regardless of
+// host, mirroring the abuse-focused blocks Tor exits apply.
+var ErrBlockedPort = errors.New("netguard: destination port blocked by exit policy")
+
+// blockedPorts are abuse-prone services the proxy must not relay: email
+// submission (spam), Windows file sharing/RPC, legacy remote shells and
+// unauthenticated file/boot/amplification services.
+var blockedPorts = map[uint16]bool{
+	25: true, 465: true, 587: true, // SMTP / SMTPS / message submission
+	135: true, 137: true, 138: true, 139: true, 445: true, // MSRPC, NetBIOS, SMB
+	17: true, 19: true, // quote/chargen amplification
+	69:  true,                       // TFTP
+	111: true,                       // portmap / Sun RPC
+	512: true, 513: true, 514: true, // rexec, rlogin, rsh
+	2049: true, // NFS
+}
+
+// CheckPort enforces the exit policy. Port 0 (unknown) is rejected.
+func CheckPort(port uint16) error {
+	if port == 0 || blockedPorts[port] {
+		return ErrBlockedPort
+	}
+	return nil
+}
+
 // IsPublic reports whether ip is a routable public unicast address. Every
 // non-public range is blocked, which also covers the cloud metadata endpoints
 // 169.254.169.254 (link-local) and fd00:ec2::254 / fe80::a9fe:a9fe.
@@ -33,13 +58,45 @@ func IsPublic(ip net.IP) bool {
 // kernel is about to dial, closing the DNS-rebinding window between an earlier
 // lookup and the actual connection.
 func control(_, address string, _ syscall.RawConn) error {
-	host, _, err := net.SplitHostPort(address)
+	host, portStr, err := net.SplitHostPort(address)
 	if err != nil {
 		host = address
 	}
 	ip := net.ParseIP(host)
 	if !IsPublic(ip) {
 		return ErrBlockedDestination
+	}
+	if portStr != "" {
+		port, err := strconv.Atoi(portStr)
+		if err != nil || port < 0 || port > 65535 {
+			return ErrBlockedPort
+		}
+		if err := CheckPort(uint16(port)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CheckHostPort validates both the public-address rule and the exit-policy
+// port list. A missing port is accepted (the caller's default applies); an
+// explicit blocked port is rejected.
+func CheckHostPort(hostOrHostport string) error {
+	host := hostOrHostport
+	var port uint16
+	if h, p, err := net.SplitHostPort(hostOrHostport); err == nil {
+		host = h
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 || n > 65535 {
+			return ErrBlockedPort
+		}
+		port = uint16(n)
+	}
+	if err := CheckHost(host); err != nil {
+		return err
+	}
+	if port != 0 {
+		return CheckPort(port)
 	}
 	return nil
 }

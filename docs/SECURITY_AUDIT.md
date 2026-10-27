@@ -18,6 +18,8 @@ custody or fund theft. Scans (`govulncheck`, `npm audit`, `gitleaks`,
 | L-1 | Low | API responses lacked hardening headers. | `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and a restrictive CSP are set on every response. |
 | L-2 | Low | OTP requests were rate-limited per email only, allowing cross-inbox spam from one IP. | A second per-IP sliding-window limiter (10 / 10 min) is enforced alongside the per-email limit. |
 | L-3 | Low | `clientIP` only trusted `X-Forwarded-For` on loopback peers, so behind Render's proxy it returned the proxy address and broke the node's self-classification. | The platform-provided first `X-Forwarded-For` hop is preferred. The value is not a trust boundary: geo/tier claims are self-derived and Stellar-signed, and the IP is never in the public directory. |
+| H-3 | High | Dependabot: integer overflow / out-of-bounds write in transitive `github.com/klauspost/compress` (≤ 1.18.6, via the Stellar SDK's zstd XDR codec). | Pinned to v1.20.3 in `go.mod`; build and full test suite pass, Dependabot alert cleared. |
+| M-4 | Medium | No egress exit policy: the proxy could relay to abuse-prone service ports (SMTP spam, SMB/NetBIOS, NFS, legacy shells). | `netguard.CheckPort` enforces an exit-policy denylist (25/465/587, 135–139/445, 2049, 512–514, …) in both handlers and in the dialer `Control` hook; covered by table tests. |
 
 ## Accepted / by design
 

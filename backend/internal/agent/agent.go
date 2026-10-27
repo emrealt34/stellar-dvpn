@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,6 +98,26 @@ func New(st *store.Store, meter *metering.Service, opts ...Option) *Service {
 	return s
 }
 
+// urlPort returns the explicit port of an http(s) URL, defaulting to 443 for
+// https and 80 for http when none is present.
+func urlPort(raw string) (uint16, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return 0, err
+	}
+	if p := u.Port(); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return 0, err
+		}
+		return uint16(n), nil
+	}
+	if u.Scheme == "https" {
+		return 443, nil
+	}
+	return 80, nil
+}
+
 // jsonError writes a properly encoded JSON error (no string concatenation).
 func jsonError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
@@ -153,6 +174,12 @@ func (s *Service) FetchHandler(w http.ResponseWriter, r *http.Request) {
 		if err := netguard.CheckHost(target); err != nil {
 			jsonError(w, http.StatusForbidden, err.Error())
 			return
+		}
+		if port, err := urlPort(target); err == nil {
+			if err := netguard.CheckPort(port); err != nil {
+				jsonError(w, http.StatusForbidden, err.Error())
+				return
+			}
 		}
 	}
 
@@ -216,7 +243,7 @@ func (s *Service) ConnectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.allowPrivate {
-		if err := netguard.CheckHost(host); err != nil {
+		if err := netguard.CheckHostPort(host); err != nil {
 			jsonError(w, http.StatusForbidden, err.Error())
 			return
 		}
