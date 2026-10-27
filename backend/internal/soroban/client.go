@@ -13,7 +13,6 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/keypair"
-	"github.com/stellar/go-stellar-sdk/network"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
@@ -25,7 +24,10 @@ const (
 	DefaultTestnetRPC        = "https://soroban-testnet.stellar.org"
 	TestnetPassphrase        = "Test SDF Network ; September 2015"
 	defaultBaseFee     int64 = 100 // 100 stroops inclusion fee, matching stellar-cli
-	txTimeout                = 60 * time.Second
+	// Generous validity window: the simulate -> rebuild -> sign -> send flow,
+	// plus upstream friendbot/ledger latency on testnet, must not outlive the
+	// timebound (an expired envelope is rejected by core with no funds moved).
+	txTimeout = 10 * time.Minute
 )
 
 // Client talks to a Soroban RPC endpoint on a fixed Stellar network.
@@ -207,11 +209,11 @@ func (c *Client) View(ctx context.Context, source *keypair.Full, contractID, fn 
 	if source == nil {
 		return xdr.ScVal{}, errors.New("soroban: view requires a source account")
 	}
-	envelope, _, err := c.buildEnvelope(ctx, source, contractID, fn, args)
+	op, err := newInvokeOp(contractID, fn, args)
 	if err != nil {
 		return xdr.ScVal{}, err
 	}
-	raw, err := xdr.MarshalBase64(&envelope)
+	raw, _, err := c.simulationEnvelope(ctx, source, op)
 	if err != nil {
 		return xdr.ScVal{}, err
 	}
@@ -244,15 +246,18 @@ func (c *Client) Invoke(ctx context.Context, signer *keypair.Full, contractID, f
 	if signer == nil {
 		return "", errors.New("soroban: invoke requires a local signer")
 	}
-	envelope, _, err := c.buildEnvelope(ctx, signer, contractID, fn, args)
-	if err != nil {
-		return "", err
-	}
-	raw, err := xdr.MarshalBase64(&envelope)
+	op, err := newInvokeOp(contractID, fn, args)
 	if err != nil {
 		return "", err
 	}
 
+	// 1. Build the pre-simulation envelope (no Soroban extension yet).
+	raw, seq, err := c.simulationEnvelope(ctx, signer, op)
+	if err != nil {
+		return "", err
+	}
+
+	// 2. Simulate to obtain the resource footprint, resource fee and auth.
 	sim, err := c.rpc.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: raw})
 	if err != nil {
 		return "", err
@@ -278,48 +283,47 @@ func (c *Client) Invoke(ctx context.Context, signer *keypair.Full, contractID, f
 		}
 	}
 
-	// Rebuild the envelope with the resource footprint and authorization.
-	// Match stellar-cli exactly: no operation-level source account.
-	hostFn, err := invokeHostFunction(contractID, fn, args)
-	if err != nil {
-		return "", err
-	}
-	op := xdr.Operation{
-		Body: xdr.OperationBody{
-			Type: xdr.OperationTypeInvokeHostFunction,
-			InvokeHostFunctionOp: &xdr.InvokeHostFunctionOp{
-				HostFunction: hostFn,
-				Auth:         auth,
-			},
+	// 3. Attach the simulated footprint/resource fee (Ext V=1 is mandatory:
+	// a V=0 extension is serialized without the Soroban data and core rejects
+	// the prepared transaction at flood time) and the recorded authorization.
+	op.Auth = auth
+	op.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+	// 4. Rebuild with the same sequence number. NewTransaction reads op.Ext
+	// via BuildTransactionExt, emits a v1 envelope, and adds the resource fee
+	// to the base inclusion fee automatically.
+	tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+		SourceAccount: &txnbuild.SimpleAccount{
+			AccountID: signer.Address(),
+			Sequence:  seq,
 		},
-	}
-	envelope.V1.Tx.Operations = []xdr.Operation{op}
-	envelope.V1.Tx.Ext = xdr.TransactionExt{SorobanData: &sorobanData}
-	envelope.V1.Signatures = nil
-	// Total fee = simulated resource fee + the base inclusion fee.
-	envelope.V1.Tx.Fee = xdr.Uint32(uint32(sim.MinResourceFee) + uint32(defaultBaseFee))
-
-	txHash, err := network.HashTransactionInEnvelope(envelope, c.passphrase)
+		IncrementSequenceNum: true,
+		BaseFee:              defaultBaseFee,
+		Preconditions: txnbuild.Preconditions{
+			TimeBounds: txnbuild.NewTimeout(int64(txTimeout.Seconds())),
+		},
+		Operations: []txnbuild.Operation{op},
+	})
 	if err != nil {
 		return "", err
 	}
-	sig, err := signer.Sign(txHash[:])
+
+	signed, err := tx.Sign(c.passphrase, signer)
 	if err != nil {
 		return "", err
 	}
-	envelope.V1.Signatures = []xdr.DecoratedSignature{
-		xdr.NewDecoratedSignature(sig, signer.Hint()),
-	}
-
-	signed, err := xdr.MarshalBase64(&envelope)
+	b64, err := signed.Base64()
 	if err != nil {
 		return "", err
 	}
 	if os.Getenv("DMESH_DUMP_TX") == "1" {
+		env := signed.ToXDR()
 		fmt.Fprintf(os.Stderr, "[dmesh-tx-dump] fn=%s fee=%d resource_fee=%d xdr=%s\n",
-			fn, envelope.V1.Tx.Fee, sorobanData.ResourceFee, signed)
+			fn, env.V1.Tx.Fee, sorobanData.ResourceFee, b64)
 	}
-	sendResp, err := c.rpc.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: signed})
+
+	// 5. Submit and wait for inclusion.
+	sendResp, err := c.rpc.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: b64})
 	if err != nil {
 		return "", err
 	}
@@ -337,14 +341,27 @@ func (c *Client) Invoke(ctx context.Context, signer *keypair.Full, contractID, f
 	return sendResp.Hash, nil
 }
 
-func (c *Client) buildEnvelope(ctx context.Context, signer *keypair.Full, contractID, fn string, args []xdr.ScVal) (xdr.TransactionEnvelope, *txnbuild.SimpleAccount, error) {
+// newInvokeOp builds a contract invocation operation without a Soroban
+// extension; the extension and authorization are attached after simulation.
+func newInvokeOp(contractID, fn string, args []xdr.ScVal) (*txnbuild.InvokeHostFunction, error) {
 	hostFn, err := invokeHostFunction(contractID, fn, args)
 	if err != nil {
-		return xdr.TransactionEnvelope{}, nil, err
+		return nil, err
 	}
+	return &txnbuild.InvokeHostFunction{HostFunction: hostFn}, nil
+}
+
+// simulationEnvelope builds the unsigned pre-simulation envelope for an invoke
+// operation and returns its base64 XDR plus the account's on-chain sequence
+// number, so the post-simulation rebuild reuses the exact same sequence.
+func (c *Client) simulationEnvelope(ctx context.Context, signer *keypair.Full, op *txnbuild.InvokeHostFunction) (string, int64, error) {
 	account, err := c.rpc.LoadAccount(ctx, signer.Address())
 	if err != nil {
-		return xdr.TransactionEnvelope{}, nil, fmt.Errorf("soroban: loading source account: %w", err)
+		return "", 0, fmt.Errorf("soroban: loading source account: %w", err)
+	}
+	seq, err := account.GetSequenceNumber()
+	if err != nil {
+		return "", 0, fmt.Errorf("soroban: reading sequence number: %w", err)
 	}
 	tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
 		SourceAccount:        account,
@@ -353,18 +370,15 @@ func (c *Client) buildEnvelope(ctx context.Context, signer *keypair.Full, contra
 		Preconditions: txnbuild.Preconditions{
 			TimeBounds: txnbuild.NewTimeout(int64(txTimeout.Seconds())),
 		},
-		Operations: []txnbuild.Operation{
-			&txnbuild.InvokeHostFunction{
-				HostFunction: hostFn,
-			},
-		},
+		Operations: []txnbuild.Operation{op},
 	})
 	if err != nil {
-		return xdr.TransactionEnvelope{}, nil, err
+		return "", 0, err
 	}
-	simple, ok := account.(*txnbuild.SimpleAccount)
-	if !ok {
-		return xdr.TransactionEnvelope{}, nil, errors.New("soroban: unexpected account type from RPC")
+	envelope := tx.ToXDR()
+	raw, err := xdr.MarshalBase64(&envelope)
+	if err != nil {
+		return "", 0, err
 	}
-	return tx.ToXDR(), simple, nil
+	return raw, seq, nil
 }
