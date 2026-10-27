@@ -1,0 +1,82 @@
+---
+import Logo from './Logo.astro';
+
+const rel = 'https://github.com/emrealt34/stellar-dvpn/releases/latest';
+const cli = [
+  { name: 'Linux x86_64', asset: 'dmesh-linux-amd64.tar.gz', kind: 'CLI' },
+  { name: 'Linux ARM64', asset: 'dmesh-linux-arm64.tar.gz', kind: 'CLI' },
+  { name: 'Windows x86_64', asset: 'dmesh-windows-amd64.tar.gz', kind: 'CLI' },
+];
+const soon = ['Desktop GUI (Linux & Windows)', 'macOS', 'Android', 'iOS'];
+---
+
+<section id="download">
+  <div class="wrap">
+    <h2>Downloads</h2>
+    <p class="section-sub">
+      Each archive contains the <code>dmesh</code> client and the <code>dmeshd</code> coordinator,
+      built and signed by CI. Verify the SHA-256 checksum after downloading.
+    </p>
+
+    <div class="grid g3">
+      {cli.map((c) => (
+        <div class="card dl">
+          <div className="dl-icon"><Logo size={34} /></div>
+          <h3>{c.name}</h3>
+          <p>Static binary · {c.kind}</p>
+          <div class="dl-actions">
+            <a class="btn btn-primary" href={`${rel}/download/${c.asset}`}>Download</a>
+            <a class="checksum" href={`${rel}/download/${c.asset.replace('.tar.gz', '.sha256')}`}>SHA-256</a>
+          </div>
+        </div>
+      ))}
+    </div>
+
+    <div class="soon">
+      <span class="badge soon"><span className="dot" />In progress</span>
+      <div class="soon-list">
+        {soon.map((s) => <span class="chip">{s}</span>)}
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .dl {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .dl-icon {
+    margin-bottom: 6px;
+  }
+  .dl-actions {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 14px;
+  }
+  .checksum {
+    font-size: 13px;
+  }
+  .soon {
+    margin-top: 28px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .soon-list {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .chip {
+    font-size: 13px;
+    color: var(--ink-soft);
+    border: 1px solid var(--line);
+    border-radius: 980px;
+    padding: 6px 14px;
+    background: #fff;
+  }
+</style>

@@ -1,13 +1,13 @@
 name: pages
 
-# Publishes the static marketing/download site in site/ to GitHub Pages.
-# Pages is configured with build_type=workflow (set via the GitHub API), so
-# this action is the sole deployer; no branch-based Jekyll build is used.
+# Builds the Astro + React web app and publishes the static output to GitHub
+# Pages. Pages is configured with build_type=workflow, so this action is the
+# sole deployer.
 on:
   push:
     branches: [main]
     paths:
-      - site/**
+      - web/**
       - .github/workflows/pages.yml
   workflow_dispatch:
 
@@ -16,26 +16,36 @@ permissions:
   pages: write
   id-token: write
 
-# Avoid concurrent Pages deploys overwriting each other.
 concurrency:
   group: pages
   cancel-in-progress: true
 
 jobs:
   deploy:
-    name: deploy site to GitHub Pages
+    name: build Astro site and deploy to GitHub Pages
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+      - name: Build
+        working-directory: web
+        run: npm run build
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: web/dist
       - name: Deploy to Pages
         id: deployment
         uses: actions/deploy-pages@v4

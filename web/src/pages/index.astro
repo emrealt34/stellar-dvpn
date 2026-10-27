@@ -1,0 +1,18 @@
+---
+import Base from '../layouts/Base.astro';
+import Hero from '../components/Hero.astro';
+import Network from '../components/Network.jsx';
+import Model from '../components/Model.astro';
+import Pricing from '../components/Pricing.astro';
+import Downloads from '../components/Downloads.astro';
+import ContractInfo from '../components/ContractInfo.astro';
+---
+
+<Base>
+  <Hero />
+  <Network client:load />
+  <Model />
+  <Pricing />
+  <Downloads />
+  <ContractInfo />
+</Base>

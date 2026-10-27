@@ -18,7 +18,6 @@ import (
 	"dmesh/internal/api"
 	"dmesh/internal/auth"
 	"dmesh/internal/config"
-	"dmesh/internal/geo"
 	"dmesh/internal/meshauth"
 	"dmesh/internal/metering"
 	"dmesh/internal/store"
@@ -49,7 +48,7 @@ func (s *signer) headers(t *testing.T, parts ...string) http.Header {
 	return h
 }
 
-func newTestServer(t *testing.T, useGeo bool) (string, *store.Store) {
+func newTestServer(t *testing.T) (string, *store.Store) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "dmesh.db"))
 	if err != nil {
@@ -64,18 +63,46 @@ func newTestServer(t *testing.T, useGeo bool) (string, *store.Store) {
 	cfg.SessionDefaultTTL = time.Hour
 	cfg.MaxBandwidthBps = 1_500_000_000
 
-	var lookup geo.Lookup
-	if useGeo {
-		lookup = geo.StaticLookup{
-			"127.0.0.1": {CountryISO: "TR", CountryName: "Turkey", ASN: 9121, ASNOrg: "Turk Telekom", Tier: geo.TierResidential},
-		}
-	}
 	meter := metering.New(st, cfg.MaxBandwidthBps)
 	agentSvc := agent.New(st, meter)
-	handler := api.New(cfg, st, lookup, nil, nil, meter, agentSvc, auth.ConsoleSender{})
+	handler := api.New(cfg, st, nil, nil, meter, agentSvc, auth.ConsoleSender{})
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	return srv.URL, st
+}
+
+// nodeProfile is the client-derived, signed geo/tier claim a node registers.
+// The coordinator no longer performs any IP geo lookup.
+type nodeProfile struct {
+	Tier     string
+	CountryISO  string
+	CountryName string
+	ASN      uint
+	ASNOrg   string
+	Payout   string
+}
+
+func defaultProfile() nodeProfile {
+	return nodeProfile{Tier: "res", CountryISO: "TR", CountryName: "Turkey", ASN: 9121, ASNOrg: "Turk Telekom"}
+}
+
+func (p nodeProfile) body() map[string]any {
+	return map[string]any{
+		"tier": p.Tier, "country_iso": p.CountryISO, "country": p.CountryName,
+		"asn": p.ASN, "asn_org": p.ASNOrg, "payout_address": p.Payout,
+	}
+}
+
+// headers signs every claimed field over the canonical payload.
+func (p nodeProfile) headers(t *testing.T, s *signer) http.Header {
+	t.Helper()
+	return s.headers(t, "register", p.Tier, p.CountryISO, p.CountryName,
+		strconv.FormatUint(uint64(p.ASN), 10), p.ASNOrg, p.Payout)
+}
+
+func registerTestNode(t *testing.T, url string, s *signer, p nodeProfile) (int, map[string]any) {
+	t.Helper()
+	return doJSON(t, http.MethodPost, url+"/api/v1/nodes/register", p.body(), p.headers(t, s))
 }
 
 func doJSON(t *testing.T, method, url string, body any, headers http.Header) (int, map[string]any) {
@@ -106,20 +133,40 @@ func doJSON(t *testing.T, method, url string, body any, headers http.Header) (in
 	return resp.StatusCode, out
 }
 
-func TestNodeRegistrationGeoAndDirectory(t *testing.T) {
-	url, st := newTestServer(t, true)
+func TestNodeRegistrationSignedClaimAndDirectory(t *testing.T) {
+	url, _ := newTestServer(t)
 	node := newSigner(t)
+	profile := defaultProfile()
 
-	status, out := doJSON(t, http.MethodPost, url+"/api/v1/nodes/register", nil, node.headers(t, "register"))
+	status, out := registerTestNode(t, url, node, profile)
 	if status != http.StatusOK {
 		t.Fatalf("register status=%d body=%v", status, out)
 	}
 	nodeMap, ok := out["node"].(map[string]any)
-	if !ok || nodeMap["tier"] != string(geo.TierResidential) {
-		t.Fatalf("expected residential tier from geo db, got %v", out)
+	if !ok || nodeMap["tier"] != "res" {
+		t.Fatalf("expected the signed residential tier to be stored, got %v", out)
 	}
 	if nodeMap["country_iso"] != "TR" {
-		t.Fatalf("country should be backend-derived TR, got %v", nodeMap)
+		t.Fatalf("signed country claim should be stored, got %v", nodeMap)
+	}
+	if out["tier_source"] != "client-signed" {
+		t.Fatalf("tier source should be client-signed, got %v", out["tier_source"])
+	}
+
+	// Tampering with a claimed field after signing must fail verification.
+	tampered := profile
+	tampered.Tier = "dc"
+	if status, _ = doJSON(t, http.MethodPost, url+"/api/v1/nodes/register",
+		tampered.body(), profile.headers(t, node)); status != http.StatusUnauthorized {
+		t.Fatalf("altered tier with stale signature should be 401, got %d", status)
+	}
+
+	// An invalid tier enum is rejected before signature checks.
+	bad := defaultProfile()
+	bad.Tier = "vpn"
+	if status, _ = doJSON(t, http.MethodPost, url+"/api/v1/nodes/register",
+		bad.body(), bad.headers(t, node)); status != http.StatusBadRequest {
+		t.Fatalf("invalid tier should be 400, got %d", status)
 	}
 
 	// Heartbeat keeps the node online.
@@ -142,36 +189,28 @@ func TestNodeRegistrationGeoAndDirectory(t *testing.T) {
 		t.Fatalf("expected 1 public node, got %d", len(nodes))
 	}
 	if _, leaks := nodes[0].(map[string]any)["ip"]; leaks {
-		t.Fatal("public directory must not leak raw node IPs")
+		t.Fatalf("public directory must not leak raw node IPs")
 	}
-
-	// Without geo databases the coordinator must fail loudly, never trust client claims.
-	urlNoGeo, _ := newTestServer(t, false)
-	status, out = doJSON(t, http.MethodPost, urlNoGeo+"/api/v1/nodes/register", nil, node.headers(t, "register"))
-	if status != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 without geo db, got %d %v", status, out)
-	}
-	_ = st
 }
 
 func TestSignatureRejection(t *testing.T) {
-	url, _ := newTestServer(t, true)
+	url, _ := newTestServer(t)
 	node := newSigner(t)
-	h := node.headers(t, "register")
+	h := defaultProfile().headers(t, node)
 	h.Set(meshauth.HeaderSignature, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	status, _ := doJSON(t, http.MethodPost, url+"/api/v1/nodes/register", nil, h)
+	status, _ := doJSON(t, http.MethodPost, url+"/api/v1/nodes/register", defaultProfile().body(), h)
 	if status != http.StatusUnauthorized {
 		t.Fatalf("forged signature should be 401, got %d", status)
 	}
 }
 
 func TestSessionCoordinateCountersAndSettlement(t *testing.T) {
-	url, _ := newTestServer(t, true)
+	url, _ := newTestServer(t)
 	node := newSigner(t)
 	client := newSigner(t)
 	tokenContract := "CDLM3Z4JTESTTESTTESTTESTTESTTESTTESTTESTTEST"
 
-	if status, _ := doJSON(t, http.MethodPost, url+"/api/v1/nodes/register", nil, node.headers(t, "register")); status != 200 {
+	if status, _ := registerTestNode(t, url, node, defaultProfile()); status != 200 {
 		t.Fatal("node registration failed")
 	}
 
@@ -184,7 +223,7 @@ func TestSessionCoordinateCountersAndSettlement(t *testing.T) {
 	}
 	args := out["open_session_args"].(map[string]any)
 	nonce := args["nonce_hex"].(string)
-	if args["tier"] != string(geo.TierResidential) {
+	if args["tier"] != "res" {
 		t.Fatalf("tier should come from node geo record, got %v", args)
 	}
 
@@ -251,7 +290,7 @@ func TestSessionCoordinateCountersAndSettlement(t *testing.T) {
 }
 
 func TestAgentFetchIsMeteredAndAuthenticated(t *testing.T) {
-	url, _ := newTestServer(t, true)
+	url, _ := newTestServer(t)
 	node := newSigner(t)
 	client := newSigner(t)
 
@@ -260,7 +299,7 @@ func TestAgentFetchIsMeteredAndAuthenticated(t *testing.T) {
 	}))
 	defer target.Close()
 
-	doJSON(t, http.MethodPost, url+"/api/v1/nodes/register", nil, node.headers(t, "register"))
+	registerTestNode(t, url, node, defaultProfile())
 	_, out := doJSON(t, http.MethodPost, url+"/api/v1/sessions",
 		map[string]any{"node_address": node.kp.Address(), "token_address": "CTEST"},
 		client.headers(t, "open", node.kp.Address(), "CTEST"))
@@ -321,7 +360,7 @@ func TestAgentFetchIsMeteredAndAuthenticated(t *testing.T) {
 }
 
 func TestDashboardOTPFlow(t *testing.T) {
-	url, st := newTestServer(t, true)
+	url, st := newTestServer(t)
 	email := "operator@example.com"
 
 	status, out := doJSON(t, http.MethodPost, url+"/api/v1/dashboard/otp/request",
@@ -350,7 +389,7 @@ func TestDashboardOTPFlow(t *testing.T) {
 
 	// Linking requires both a dashboard JWT and a mesh signature.
 	node := newSigner(t)
-	doJSON(t, http.MethodPost, url+"/api/v1/nodes/register", nil, node.headers(t, "register"))
+	registerTestNode(t, url, node, defaultProfile())
 	req, _ := http.NewRequest(http.MethodPost, url+"/api/v1/dashboard/link",
 		bytes.NewReader(mustJSON(map[string]string{"mesh_address": node.kp.Address()})))
 	req.Header.Set("Content-Type", "application/json")
@@ -379,24 +418,23 @@ func mustJSON(v any) []byte {
 }
 
 func TestNodeRegistrationPayoutAddress(t *testing.T) {
-	url, _ := newTestServer(t, true)
+	url, _ := newTestServer(t)
 	node := newSigner(t)
-	const xmr = "44GxQp9vLtbxMj37NqfN8Wj5dr7G3QkP6m2RvS8tUaBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdefghij"
+	const payout = "GDO46GQ3M6V6VY2KZQJXH3DGR7AH4G5J3P2T2VY2KZQJXH3DGR7AH"
 
-	// Valid, signed payout address is stored and surfaced in the directory.
-	status, out := doJSON(t, http.MethodPost, url+"/api/v1/nodes/register",
-		map[string]any{"payout_address": xmr},
-		node.headers(t, "register", xmr))
+	// A signed payout address is stored and surfaced in the directory.
+	profile := defaultProfile()
+	profile.Payout = payout
+	status, out := registerTestNode(t, url, node, profile)
 	if status != http.StatusOK {
 		t.Fatalf("register with payout address status=%d body=%v", status, out)
 	}
-	if got := out["node"].(map[string]any)["payout_address"]; got != xmr {
+	if got := out["node"].(map[string]any)["payout_address"]; got != payout {
 		t.Fatalf("payout address not stored, got %v", got)
 	}
 
 	// Re-registering without the field must preserve the stored address.
-	if status, _ = doJSON(t, http.MethodPost, url+"/api/v1/nodes/register", nil,
-		node.headers(t, "register")); status != http.StatusOK {
+	if status, _ = registerTestNode(t, url, node, defaultProfile()); status != http.StatusOK {
 		t.Fatalf("plain re-register status=%d", status)
 	}
 	resp, err := http.Get(url + "/api/v1/nodes")
@@ -410,15 +448,16 @@ func TestNodeRegistrationPayoutAddress(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&dir); err != nil {
 		t.Fatal(err)
 	}
-	if len(dir.Nodes) != 1 || dir.Nodes[0]["payout_address"] != xmr {
+	if len(dir.Nodes) != 1 || dir.Nodes[0]["payout_address"] != payout {
 		t.Fatalf("directory should retain payout address, got %+v", dir.Nodes)
 	}
 
 	// Disallowed characters are rejected.
-	bad := newSigner(t)
+	badSigner := newSigner(t)
+	bad := defaultProfile()
+	bad.Payout = "not-a-valid-address"
 	if status, _ = doJSON(t, http.MethodPost, url+"/api/v1/nodes/register",
-		map[string]any{"payout_address": "not-a-valid-address"},
-		bad.headers(t, "register", "not-a-valid-address")); status != http.StatusBadRequest {
+		bad.body(), bad.headers(t, badSigner)); status != http.StatusBadRequest {
 		t.Fatalf("invalid payout charset should be 400, got %d", status)
 	}
 }

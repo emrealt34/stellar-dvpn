@@ -19,9 +19,6 @@ type Config struct {
 	// SettlementContractID is the C... address of the deployed dmesh
 	// settlement contract. Empty until deployment is performed.
 	SettlementContractID string
-	// GeoLite2 database locations, refreshed daily by CI.
-	GeoCountryDB string
-	GeoASNDB     string
 	// AdminStellarSecret is used only for contract administration calls
 	// (tier and oracle-price updates). It never custody-creates user funds.
 	AdminStellarSecret string
@@ -77,8 +74,6 @@ func Load() *Config {
 		SorobanRPCURL:        env("SOROBAN_RPC_URL", "https://soroban-testnet.stellar.org"),
 		NetworkPassphrase:    env("NETWORK_PASSPHRASE", "Test SDF Network ; September 2015"),
 		SettlementContractID: os.Getenv("SETTLEMENT_CONTRACT_ID"),
-		GeoCountryDB:         env("GEO_COUNTRY_DB", "data/GeoLite2-Country.mmdb"),
-		GeoASNDB:             env("GEO_ASN_DB", "data/GeoLite2-ASN.mmdb"),
 		AdminStellarSecret:   os.Getenv("ADMIN_STELLAR_SECRET"),
 		TokenTTL:             time.Duration(envInt("TOKEN_TTL_HOURS", 720)) * time.Hour,
 		OTPTTL:               time.Duration(envInt("OTP_TTL_MINUTES", 10)) * time.Minute,

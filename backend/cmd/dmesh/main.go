@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -21,6 +22,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/keypair"
 
 	"dmesh/internal/cliclient"
+	"dmesh/internal/geo"
 	"dmesh/internal/meshauth"
 	"dmesh/internal/soroban"
 )
@@ -67,7 +69,7 @@ func usage() {
 
 Commands:
   keygen                       Generate a local Stellar mesh identity
-  register   --coordinator URL --secret S...
+  register   --coordinator URL --secret S... [--geo-country FILE --geo-asn FILE] [--tier res|dc --country-iso TR --country Turkiye --asn 9121 --asn-org "Turk Telekom"] [--payout ADDR] [--ip 1.2.3.4]
   heartbeat  --coordinator URL --secret S... --up N --down N
   nodes      --coordinator URL             Public node directory
   session    --coordinator URL --secret S... --node G... --token C/G... [--ttl 3600] [--open]
@@ -110,6 +112,15 @@ func register(args []string) error {
 	fs := flag.NewFlagSet("register", flag.ContinueOnError)
 	coordinator := fs.String("coordinator", os.Getenv("DMESH_COORDINATOR"), "coordinator base URL")
 	secret := fs.String("secret", "", "S... secret seed")
+	tier := fs.String("tier", "", "manual pricing tier: res|dc (otherwise derived from the geo DB)")
+	countryISO := fs.String("country-iso", "", "manual country ISO code")
+	countryName := fs.String("country", "", "manual country name")
+	asnOrg := fs.String("asn-org", "", "manual ASN organization")
+	asn := fs.Uint("asn", 0, "manual ASN number")
+	payout := fs.String("payout", "", "optional payout address (informational only)")
+	externalIP := fs.String("ip", "", "override the externally observed IP")
+	geoCountry := fs.String("geo-country", os.Getenv("GEO_COUNTRY_DB"), "path to GeoLite2-Country.mmdb")
+	geoASN := fs.String("geo-asn", os.Getenv("GEO_ASN_DB"), "path to GeoLite2-ASN.mmdb")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -117,7 +128,47 @@ func register(args []string) error {
 	if err != nil {
 		return err
 	}
-	out, err := c.Register()
+
+	claim := cliclient.NodeClaim{
+		Tier:        strings.TrimSpace(*tier),
+		CountryISO:  strings.TrimSpace(*countryISO),
+		CountryName: strings.TrimSpace(*countryName),
+		ASNOrg:      strings.TrimSpace(*asnOrg),
+		ASN:         *asn,
+		Payout:      strings.TrimSpace(*payout),
+	}
+
+	// Unless a full manual claim is supplied, classify locally against the
+	// CI-published geo databases. The coordinator never performs this lookup.
+	if claim.Tier == "" {
+		ipStr := strings.TrimSpace(*externalIP)
+		if ipStr == "" {
+			ipStr, err = c.EchoIP()
+			if err != nil {
+				return fmt.Errorf("resolving external IP: %w (pass --ip to override)", err)
+			}
+		}
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			return fmt.Errorf("invalid IP %q", ipStr)
+		}
+		lookup, gerr := geo.Open(*geoCountry, *geoASN)
+		if gerr != nil {
+			return fmt.Errorf("geo databases unavailable (%w); download them from the geoip-latest release or pass --tier/--country manually", gerr)
+		}
+		defer lookup.Close()
+		info, gerr := lookup.Lookup(ip)
+		if gerr != nil {
+			return fmt.Errorf("classifying %s: %w", ipStr, gerr)
+		}
+		claim.Tier = string(info.Tier)
+		claim.CountryISO = info.CountryISO
+		claim.CountryName = info.CountryName
+		claim.ASN = info.ASN
+		claim.ASNOrg = info.ASNOrg
+	}
+
+	out, err := c.Register(claim)
 	if err != nil {
 		return err
 	}

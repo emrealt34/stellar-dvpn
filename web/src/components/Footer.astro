@@ -1,0 +1,43 @@
+---
+import Logo from './Logo.astro';
+const repo = 'https://github.com/emrealt34/stellar-dvpn';
+---
+
+<footer>
+  <div class="wrap inner">
+    <div class="brand">
+      <Logo size={24} />
+      <span>dmesh</span>
+    </div>
+    <p>Open source under the MIT license. Testnet software — use test funds only.</p>
+    <a href={repo} target="_blank" rel="noopener">GitHub</a>
+  </div>
+</footer>
+
+<style>
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 36px 0 60px;
+    color: var(--ink-soft);
+    font-size: 13px;
+  }
+  .inner {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+  .inner p {
+    margin: 0;
+  }
+  .inner a {
+    margin-left: auto;
+  }
+</style>

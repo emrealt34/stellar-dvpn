@@ -3,80 +3,104 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
-	"dmesh/internal/geo"
 	"dmesh/internal/meshauth"
 	"dmesh/internal/store"
 )
 
-// maxPayoutAddressLen bounds the optional node payout address (a Monero/XMR
-// address is at most 106 characters; allow headroom for other networks).
-const maxPayoutAddressLen = 120
+// Input bounds for the self-attested node record. The coordinator is a dumb
+// relay: the node client resolves its own geography from the CI-published geo
+// database and signs the result; the server only validates shape and stores it.
+const (
+	maxPayoutAddressLen = 120
+	maxCountryISOLen    = 8
+	maxCountryNameLen   = 80
+	maxASNOrgLen        = 120
+)
+
+// allowedTiers are the two pricing classes the contract understands.
+var allowedTiers = map[string]bool{"res": true, "dc": true}
+
+type registerRequest struct {
+	// Geography and tier are computed by the node client locally (using the
+	// geo database published by CI) and covered by the Stellar signature, so a
+	// record cannot be altered in transit. The coordinator never looks an IP up.
+	Tier          string `json:"tier"`
+	CountryISO    string `json:"country_iso"`
+	CountryName   string `json:"country"`
+	ASN           uint   `json:"asn"`
+	ASNOrg        string `json:"asn_org"`
+	PayoutAddress string `json:"payout_address"`
+}
 
 // registerNode registers a mesh node. The only identity is the Stellar G
-// address; the geo classification (country, residential/datacenter tier) is
-// derived here from the peer IP using the CI-refreshed geo databases.
+// address. The node signs its own geo/tier claim; the coordinator stores the
+// signed record and the transport IP (kept private) for abuse control only.
 func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
-
-	// Optional body: the node's payout address. It is metadata only — dmesh
-	// settlement still happens in Stellar assets; no custodial payout is
-	// performed by the coordinator.
-	var body struct {
-		PayoutAddress string `json:"payout_address"`
-	}
+	var in registerRequest
 	if r.ContentLength != 0 {
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&body); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<13)).Decode(&in); err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
 	}
-	payout := strings.TrimSpace(body.PayoutAddress)
-	if len(payout) > maxPayoutAddressLen {
+	in.Tier = strings.TrimSpace(in.Tier)
+	in.CountryISO = strings.TrimSpace(in.CountryISO)
+	in.CountryName = strings.TrimSpace(in.CountryName)
+	in.ASNOrg = strings.TrimSpace(in.ASNOrg)
+	in.PayoutAddress = strings.TrimSpace(in.PayoutAddress)
+
+	if !allowedTiers[in.Tier] {
+		writeError(w, http.StatusBadRequest, errTierInvalid)
+		return
+	}
+	if len(in.CountryISO) > maxCountryISOLen || len(in.CountryName) > maxCountryNameLen || len(in.ASNOrg) > maxASNOrgLen {
+		writeError(w, http.StatusBadRequest, errGeoFieldTooLong)
+		return
+	}
+	if len(in.PayoutAddress) > maxPayoutAddressLen {
 		writeError(w, http.StatusBadRequest, errPayoutTooLong)
 		return
 	}
-	if payout != "" && !isSafeAddress(payout) {
+	if in.PayoutAddress != "" && !isSafeAddress(in.PayoutAddress) {
 		writeError(w, http.StatusBadRequest, errPayoutBadChars)
 		return
 	}
 
-	// The signed payload intentionally excludes the IP: a client cannot know
-	// its NAT-external address, while the server derives it from the transport
-	// and never trusts a client claim. The payout address, when present, is
-	// included in the signed payload so it cannot be tampered in transit.
-	signedParts := []string{"register"}
-	if payout != "" {
-		signedParts = append(signedParts, payout)
+	// Every claimed field participates in the canonical signed payload, so the
+	// stored record is exactly what the node's own key attested to.
+	parts := []string{
+		"register",
+		in.Tier,
+		in.CountryISO,
+		in.CountryName,
+		strconv.FormatUint(uint64(in.ASN), 10),
+		in.ASNOrg,
+		in.PayoutAddress,
 	}
 	req, err := meshauth.ParseSigned(
 		r.Header.Get(meshauth.HeaderAddress),
 		r.Header.Get(meshauth.HeaderTimestamp),
 		r.Header.Get(meshauth.HeaderSignature),
-		signedParts...)
+		parts...)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
-	if s.Geo == nil {
-		writeError(w, http.StatusServiceUnavailable, errGeoUnavailable)
-		return
-	}
-	info, err := s.Geo.Lookup(ip)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
-		return
-	}
+
+	// Transport IP is retained privately for rate limiting/abuse handling and
+	// is never serialized to the public directory.
 	node, err := s.Store.UpsertNode(&store.Node{
 		MeshAddress:   req.Address,
-		PayoutAddress: payout,
-		CountryISO:    info.CountryISO,
-		CountryName:   info.CountryName,
-		ASN:           info.ASN,
-		ASNOrg:        info.ASNOrg,
-		Tier:          string(info.Tier),
-		IP:            ip.String(),
+		PayoutAddress: in.PayoutAddress,
+		CountryISO:    in.CountryISO,
+		CountryName:   in.CountryName,
+		ASN:           in.ASN,
+		ASNOrg:        in.ASNOrg,
+		Tier:          in.Tier,
+		IP:            clientIP(r).String(),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -84,8 +108,7 @@ func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"node":        node,
-		"tier_source": "backend-geo-db",
-		"note":        "clients cannot self-report country or tier",
+		"tier_source": "client-signed",
 	})
 }
 
@@ -117,14 +140,20 @@ func (s *Server) nodeHeartbeat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "online"})
 }
 
-// listNodes is the public node directory.
+// echoIP reports the transport IP the request came from. It performs no
+// classification: the node is expected to derive its own tier/geography
+// locally against the CI-published geo database.
+func (s *Server) echoIP(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"ip": clientIP(r).String()})
+}
+
+// listNodes is the public node directory. Raw peer IPs are never exposed.
 func (s *Server) listNodes(w http.ResponseWriter, _ *http.Request) {
 	nodes, err := s.Store.ListOnlineNodes()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	// Never expose raw peer IPs in the public directory.
 	public := make([]map[string]any, 0, len(nodes))
 	for _, n := range nodes {
 		public = append(public, map[string]any{
@@ -134,7 +163,7 @@ func (s *Server) listNodes(w http.ResponseWriter, _ *http.Request) {
 			"country":        n.CountryName,
 			"tier":           n.Tier,
 			"asn_org":        n.ASNOrg,
-			"is_datacenter":  n.Tier == string(geo.TierDatacenter),
+			"is_datacenter":  n.Tier == "dc",
 			"last_seen":      n.LastSeen,
 		})
 	}

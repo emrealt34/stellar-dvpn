@@ -93,17 +93,59 @@ func (c *Client) do(method, path string, body any, headers http.Header, out any)
 	return nil
 }
 
-// Register registers the local mesh address as a node.
-func (c *Client) Register() (map[string]any, error) {
-	headers, err := c.signedHeaders("register")
+// NodeClaim is the node's self-derived, signed geography and pricing tier.
+// The node computes it locally from the CI-published geo database; the
+// coordinator only stores the signed record and never classifies an IP.
+type NodeClaim struct {
+	Tier        string
+	CountryISO  string
+	CountryName string
+	ASN         uint
+	ASNOrg      string
+	Payout      string
+}
+
+// Register registers the local mesh address as a node, signing the full claim
+// so no field can be altered between the client and the coordinator.
+func (c *Client) Register(claim NodeClaim) (map[string]any, error) {
+	body := map[string]any{
+		"tier":           claim.Tier,
+		"country_iso":    claim.CountryISO,
+		"country":        claim.CountryName,
+		"asn":            claim.ASN,
+		"asn_org":        claim.ASNOrg,
+		"payout_address": claim.Payout,
+	}
+	parts := []string{
+		"register",
+		claim.Tier,
+		claim.CountryISO,
+		claim.CountryName,
+		strconv.FormatUint(uint64(claim.ASN), 10),
+		claim.ASNOrg,
+		claim.Payout,
+	}
+	headers, err := c.signedHeaders(parts...)
 	if err != nil {
 		return nil, err
 	}
 	var out map[string]any
-	if err := c.do(http.MethodPost, "/api/v1/nodes/register", nil, headers, &out); err != nil {
+	if err := c.do(http.MethodPost, "/api/v1/nodes/register", body, headers, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// EchoIP asks the coordinator to report the transport IP it observed. This is
+// only an observation: the node itself runs the geo classification locally.
+func (c *Client) EchoIP() (string, error) {
+	var out struct {
+		IP string `json:"ip"`
+	}
+	if err := c.do(http.MethodGet, "/api/v1/network/ip", nil, http.Header{}, &out); err != nil {
+		return "", err
+	}
+	return out.IP, nil
 }
 
 // Heartbeat refreshes liveness and cumulative traffic counters.

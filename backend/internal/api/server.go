@@ -6,12 +6,13 @@ package api
 import (
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"dmesh/internal/agent"
 	"dmesh/internal/auth"
 	"dmesh/internal/config"
-	"dmesh/internal/geo"
+	"dmesh/internal/meshauth"
 	"dmesh/internal/metering"
 	"dmesh/internal/soroban"
 	"dmesh/internal/store"
@@ -21,7 +22,6 @@ import (
 type Server struct {
 	Cfg      *config.Config
 	Store    *store.Store
-	Geo      geo.Lookup // nil when geo databases are not installed
 	Soroban  *soroban.Client
 	Settle   *soroban.Settlement // nil until SETTLEMENT_CONTRACT_ID is set
 	Metering *metering.Service
@@ -31,14 +31,14 @@ type Server struct {
 	devCodes map[string]string
 }
 
-// New constructs the HTTP handler.
-func New(cfg *config.Config, st *store.Store, geoLookup geo.Lookup,
+// New constructs the HTTP handler. The coordinator performs no geo/IP
+// classification: nodes sign their own geo claim, keeping this service dumb.
+func New(cfg *config.Config, st *store.Store,
 	sorobanClient *soroban.Client, settle *soroban.Settlement,
 	meter *metering.Service, ag *agent.Service, sender auth.Sender) http.Handler {
 	s := &Server{
 		Cfg:      cfg,
 		Store:    st,
-		Geo:      geoLookup,
 		Soroban:  sorobanClient,
 		Settle:   settle,
 		Metering: meter,
@@ -56,6 +56,8 @@ func New(cfg *config.Config, st *store.Store, geoLookup geo.Lookup,
 	mux.HandleFunc("GET /api/v1/public/stats", s.publicStats)
 	mux.HandleFunc("GET /api/v1/public/pricing", s.publicPricing)
 	mux.HandleFunc("GET /api/v1/nodes", s.listNodes)
+	// Neutral IP echo: the node learns its transport IP but classifies it locally.
+	mux.HandleFunc("GET /api/v1/network/ip", s.echoIP)
 
 	// Mesh identity (Stellar key signatures, no passwords)
 	mux.HandleFunc("POST /api/v1/nodes/register", s.registerNode)
@@ -81,7 +83,27 @@ func New(cfg *config.Config, st *store.Store, geoLookup geo.Lookup,
 		mux.HandleFunc("GET /api/v1/dashboard/otp/debug", s.debugOTP)
 	}
 
-	return mux
+	return cors(mux)
+}
+
+// cors allows browser-based clients (the web UI) to read the public,
+// non-custodial API. All mutating calls require Stellar-signed headers rather
+// than ambient credentials, so a wildcard origin is safe here.
+func cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", strings.Join([]string{
+			meshauth.HeaderAddress, meshauth.HeaderTimestamp,
+			meshauth.HeaderSignature, meshauth.HeaderSession, "Content-Type",
+		}, ", "))
+		w.Header().Set("Access-Control-Max-Age", "86400")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) maintenanceLoop() {
@@ -105,7 +127,6 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":              "ok",
 		"contract_configured": s.Settle != nil,
-		"geo_configured":      s.Geo != nil,
 		"network":             s.Cfg.NetworkPassphrase,
 	})
 }
@@ -120,7 +141,7 @@ func (s *Server) publicStats(w http.ResponseWriter, _ *http.Request) {
 	res, dc := 0, 0
 	for _, n := range nodes {
 		countries[n.CountryISO] = true
-		if n.Tier == string(geo.TierDatacenter) {
+		if n.Tier == "dc" {
 			dc++
 		} else {
 			res++

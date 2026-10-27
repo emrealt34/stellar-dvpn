@@ -1,0 +1,72 @@
+---
+import Logo from './Logo.astro';
+const repo = 'https://github.com/emrealt34/stellar-dvpn';
+---
+
+<header class="nav">
+  <div class="wrap inner">
+    <a class="brand" href="#top">
+      <Logo size={30} />
+      <span>dmesh</span>
+    </a>
+    <nav>
+      <a href="#network">Network</a>
+      <a href="#model">Model</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#download">Download</a>
+      <a href="#contract">Contract</a>
+      <a class="gh" href={repo} target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<style>
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: saturate(180%) blur(18px);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  }
+  .inner {
+    display: flex;
+    align-items: center;
+    height: 56px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 18px;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+  }
+  .brand:hover {
+    text-decoration: none;
+  }
+  nav {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    font-size: 14px;
+  }
+  nav a {
+    color: var(--ink-soft);
+  }
+  nav a:hover {
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .gh {
+    font-weight: 600;
+    color: var(--accent) !important;
+  }
+  @media (max-width: 760px) {
+    nav a:not(.gh) {
+      display: none;
+    }
+  }
+</style>

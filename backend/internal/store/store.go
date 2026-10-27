@@ -26,7 +26,7 @@ type Node struct {
 	ID            int64     `json:"id"`
 	MeshAddress   string    `json:"mesh_address"` // G... address, the only identity required
 	Email         string    `json:"email,omitempty"` // optional, linked via dashboard OTP
-	PayoutAddress string    `json:"payout_address,omitempty"` // optional node payout address (e.g. Monero/XMR); metadata only
+	PayoutAddress string    `json:"payout_address,omitempty"` // optional node payout address; informational only, never used to move funds
 	CountryISO    string    `json:"country_iso"`
 	CountryName string    `json:"country"`
 	ASN         uint      `json:"asn"`
@@ -165,40 +165,7 @@ CREATE TABLE IF NOT EXISTS settings (
 	value TEXT NOT NULL
 );
 `)
-	if err != nil {
-		return err
-	}
-	// Forward migration for databases created before payout_address existed.
-	if ok, err := s.columnExists("nodes", "payout_address"); err != nil {
-		return err
-	} else if !ok {
-		if _, err := s.db.Exec(`ALTER TABLE nodes ADD COLUMN payout_address TEXT NOT NULL DEFAULT ''`); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// columnExists reports whether a table currently has a given column.
-func (s *Store) columnExists(table, column string) (bool, error) {
-	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var name, ctype string
-		var notNull, pk int
-		var dflt any
-		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
-			return false, err
-		}
-		if name == column {
-			return true, nil
-		}
-	}
-	return false, rows.Err()
+	return err
 }
 
 // ---------------------------------------------------------------------------
@@ -240,8 +207,8 @@ func scanNode(row interface{ Scan(...any) error }) (*Node, error) {
 	return &n, err
 }
 
-// UpsertNode registers a node by mesh address, stamping the backend-derived
-// geo classification. Re-registration refreshes geo data and last_seen.
+// UpsertNode registers a node by mesh address, storing the node's own signed
+// geo/tier claim. Re-registration refreshes the claim and last_seen.
 func (s *Store) UpsertNode(n *Node) (*Node, error) {
 	now := time.Now().UTC()
 	_, err := s.db.Exec(

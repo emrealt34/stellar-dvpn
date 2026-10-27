@@ -26,7 +26,7 @@ is enforced today and the remaining hardening roadmap.
 | Free-riding the data plane without an on-chain session | Sessions are created `pending`. The agent API (`/agent/fetch`, `/agent/connect`) and counter ingestion only accept `opened`/`proposed` sessions, and a session becomes `opened` only after the client attaches a real on-chain `open_session` transaction. A pending or expired session is refused with `401`. |
 | Disappearing node / client | Sessions carry a TTL. Unconfirmed sessions expire and never move funds; either party can cancel, which moves no money beyond network resource fees. |
 | Hidden fees / price edits | The 20% (2000 bps) protocol fee is hard-coded; tier and asset prices live in contract storage and every change emits an event. |
-| Fake node geography | Nodes never self-report country or tier. The coordinator resolves both from the peer IP using CI-refreshed GeoLite2 databases; hosting/cloud ASNs are classified as datacenter. |
+| False node geography | The coordinator performs no IP lookup. The node client resolves its own country and tier locally against the CI-published geo database and signs the entire claim; every field is covered by the Stellar signature, so it cannot be altered in transit. The coordinator only validates shape and stores it. |
 | Forged counter reports | Requests are authenticated by Stellar key signatures; counters must be monotonic per party and within an anti-fraud byte/second ceiling, and only the two session parties may report. |
 
 ## Authentication
@@ -53,29 +53,21 @@ is enforced today and the remaining hardening roadmap.
 3. **Node-side data plane.** The metered agent API is enforced centrally; the
    peer-to-peer VPN data plane on each node must apply the same
    pending/opened gate and counter logic using the shared contract.
-4. **Geo database provisioning.** Node registration returns `503` until the
-   CI-refreshed GeoLite2 databases are present; the geo-refresh workflow
-   publishes them to the rolling `geoip-latest` release.
+4. **Geo database distribution.** The node client owns classification and
+   reads the CI-published GeoLite2 files from the rolling `geoip-latest`
+   release. The coordinator has no geo dependency and no geo database to
+   operate; a node without the files may pass an explicit manual claim.
 5. **Dashboard email.** Without SMTP configured, OTP codes are logged to the
    console (development only). Configure Cloudflare Email SMTP in production.
 
-## Payout addresses and cross-chain transfers (e.g. Monero/XMR)
+## Optional payout address
 
-A node may register an optional `payout_address` (such as a Monero address).
-This is **metadata only**:
-
-- Stellar and Monero are separate ledgers. A Soroban contract cannot move XMR,
-  and there is no atomic, trustless Stellar→Monero instruction.
-- dmesh settlement therefore always occurs in Stellar assets through the
-  non-custodial allowance model. Automatically converting and paying out XMR
-  would require an independent payout service that holds funds — a deliberate
-  custodial trust addition that this project does not make by default.
-- A Monero address does not need any XMR balance to **receive** funds; receiving
-  has no minimum-balance requirement.
-- The trust-minimizing path is for nodes to receive Stellar assets and perform
-  any conversion themselves. A future optional, separately-audited payout relay
-  can consume the registered addresses, but it is outside the non-custodial
-  core and must be opted into explicitly.
+A node may register an optional `payout_address`. It is informational only:
+the coordinator never sends funds to it and holds no balance. All settlement
+happens in Stellar assets through the non-custodial allowance model, so no
+custodial payout rail or treasury wallet is introduced into the core. Any
+off-ledger payout using that address is an explicit, separately operated
+integration outside the trustless core.
 
 ## Reporting
 

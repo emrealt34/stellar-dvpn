@@ -15,7 +15,6 @@ import (
 	"dmesh/internal/api"
 	"dmesh/internal/auth"
 	"dmesh/internal/config"
-	"dmesh/internal/geo"
 	"dmesh/internal/metering"
 	"dmesh/internal/soroban"
 	"dmesh/internal/store"
@@ -31,15 +30,8 @@ func main() {
 	defer st.Close()
 	log.Printf("store ready at %s", cfg.DBPath)
 
-	var geoLookup geo.Lookup
-	g, err := geo.Open(cfg.GeoCountryDB, cfg.GeoASNDB)
-	if err != nil {
-		log.Printf("warning: geo databases unavailable (%v); node registration will return 503 until CI refreshes them", err)
-	} else {
-		geoLookup = g
-		log.Printf("geo databases loaded: %s, %s", cfg.GeoCountryDB, cfg.GeoASNDB)
-	}
-
+	// Geography/tier classification runs in the node client against the
+	// CI-published geo database; the coordinator stores only the signed claim.
 	sorobanClient := soroban.New(cfg.SorobanRPCURL, cfg.NetworkPassphrase)
 	defer sorobanClient.Close()
 	var settlement *soroban.Settlement
@@ -64,7 +56,7 @@ func main() {
 		log.Printf("warning: SMTP not configured; dashboard OTP codes are printed to the console (dev only)")
 	}
 
-	handler := api.New(cfg, st, geoLookup, sorobanClient, settlement, meter, agentService, sender)
+	handler := api.New(cfg, st, sorobanClient, settlement, meter, agentService, sender)
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,

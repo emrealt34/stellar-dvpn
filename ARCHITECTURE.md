@@ -9,18 +9,20 @@
    scoped token allowance the user approved.
 3. **The Soroban smart contract is the only source of trust.** It verifies
    authorization, enforces pricing, splits the fee and blocks replay. The
-   backend is a dumb coordinator: discovery, relay of signed statements,
-   geo-IP classification and indexing. It can lie in its database — nobody's
-   money depends on it.
+   backend is a dumb coordinator: discovery and relay of signed statements and
+   indexing. It holds no wallet and does no geo-IP classification — it can lie
+   in its database, and nobody's money depends on it.
 4. **20% protocol fee, on-chain.** Each settlement sends 80% to the exit node
    and 20% to the protocol address. The split is contract code, not a server
    setting.
 5. **Nobody can cheat.** A client that consumed 3 GB cannot settle 1 GB; a node
    cannot invent traffic. Settlement requires both parties' Stellar
    authorization on the exact same byte counters.
-6. **Client-provided metadata is never trusted.** Node country/IP type
-   (residential vs datacenter) is derived server-side from the node's observed
-   public IP against a geo-IP database refreshed daily by CI.
+6. **The node classifies itself, the coordinator stays dumb.** The node client
+   resolves its own public IP and derives country/IP type (residential vs
+   datacenter) locally against the CI-published geo database, then signs the
+   full claim. The coordinator stores the signed record but performs no geo
+   lookup, so no trust in the backend is required even for geography.
 
 ## Settlement flow (Soroban)
 
@@ -74,9 +76,10 @@ rate change is permanently auditable on-chain.
   from a key generated locally on the device (`dmesh --address G...` or
   `dmesh --address you@mail.example` for the app account).
 - Node registration requires no email, no OTP, no name, no country. The node
-  signs a server challenge with its mesh key to prove control. The backend
-  records the observed public IP, resolves country + ASN + residential class
-  from the CI-refreshed geo database, and assigns the pricing tier.
+  client classifies its own public IP against the CI-published geo database,
+  then signs the country + ASN + tier claim with its mesh key. The coordinator
+  stores the signed claim (and the observed transport IP, kept private) but
+  performs no geo lookup and assigns nothing.
 - Email OTP exists **only** for the web/app dashboard login. No SMS.
 
 ## Components
@@ -84,7 +87,7 @@ rate change is permanently auditable on-chain.
 | Component | Stack | Responsibility |
 |---|---|---|
 | `contract/` | Rust + Soroban | settlement, fee split, tier table, oracle entries, auth, replay protection |
-| `backend/` | Go, stdlib HTTP, SQLite | OTP, mesh registry, geo-IP, session relay, agent API, Soroban RPC client |
+| `backend/` | Go, stdlib HTTP, SQLite | OTP, mesh registry (stores signed claims), session relay, agent API, Soroban RPC client — no geo-IP dependency |
 | `cli/` (`dmesh`) | Go | wallet, node daemon, WireGuard control, signed counters, contract calls |
 | `web/` | Astro + React | marketing site, live map/stats, docs, downloads, dashboard |
 | `extension/` | WebExtension | browser-side agent API consumer |
@@ -97,7 +100,7 @@ rate change is permanently auditable on-chain.
 | Bytes billed | dual Stellar authorization in `confirm_settlement` |
 | Price/tier | contract storage + change events |
 | Fee goes to protocol | hard-coded 2000 bps split in contract |
-| Node location/type | server geo-IP DB (CI refreshed), client input ignored |
+| Node location/type | node client classifies locally against the CI-published geo DB and signs it; coordinator stores the claim |
 | No double spend | settled flag + unique nonce, enforced by contract |
 | Funds safety | allowances only; contract holds no balance, no keys |
 | Crash recovery | TTL expiry; unconfirmed sessions never draw funds |

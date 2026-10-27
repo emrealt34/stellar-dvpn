@@ -1,0 +1,53 @@
+---
+const cards = [
+  {
+    title: 'Custody stays with the user',
+    body:
+      'The service holds no wallet and no balance. A session draws funds only from an allowance the client approves, executed by the contract through transfer_from.',
+  },
+  {
+    title: 'Two signatures per settlement',
+    body:
+      'The client proposes the byte counters and the node confirms the same values. A mismatch fails on chain, so traffic can be neither invented nor underpaid.',
+  },
+  {
+    title: 'Sessions expire safely',
+    body:
+      'Every session has a TTL. If either side disappears, it simply expires. An unconfirmed session never moves funds beyond network fees.',
+  },
+  {
+    title: 'Pricing anyone can verify',
+    body:
+      'Rates and the 20% protocol fee live in contract storage, and changes emit events. The same values the UI shows are the values enforced on chain.',
+  },
+];
+---
+
+<section id="model" class="alt">
+  <div class="wrap">
+    <h2>Settlement without a trusted middleman</h2>
+    <p class="section-sub">
+      The coordinator relays signed statements and indexes the directory. It cannot spend funds
+      or rewrite counters — the contract is the only authority.
+    </p>
+    <div class="grid g3">
+      {cards.map((c) => (
+        <div class="card">
+          <h3>{c.title}</h3>
+          <p>{c.body}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+
+<style>
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  @media (max-width: 760px) {
+    .grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

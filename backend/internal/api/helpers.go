@@ -10,20 +10,15 @@ import (
 	"time"
 )
 
-// errGeoUnavailable is returned when node registration is attempted but the
-// geo databases are not installed. The service never falls back to
-// client-supplied location data.
-var errGeoUnavailable = errors.New(
-	"geo databases are not installed on this coordinator; set GEO_COUNTRY_DB and GEO_ASN_DB from the CI-refreshed GeoLite2 files")
-
 var (
-	errPayoutTooLong  = errors.New("payout_address exceeds 120 characters")
-	errPayoutBadChars = errors.New("payout_address may contain only alphanumeric characters")
+	errTierInvalid     = errors.New("tier must be \"res\" or \"dc\"")
+	errGeoFieldTooLong = errors.New("geo field exceeds its maximum length")
+	errPayoutTooLong   = errors.New("payout_address exceeds 120 characters")
+	errPayoutBadChars  = errors.New("payout_address may contain only alphanumeric characters")
 )
 
-// isSafeAddress performs a conservative charset check on an optional payout
-// address. It is intentionally network-agnostic (Stellar G/C, Monero base58,
-// etc.); full per-network checksum validation belongs in the client/UI.
+// isSafeAddress performs a conservative charset check on the optional payout
+// address. Full per-network checksum validation belongs in the client/UI.
 func isSafeAddress(s string) bool {
 	if s == "" {
 		return false

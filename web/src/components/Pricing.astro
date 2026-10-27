@@ -1,0 +1,36 @@
+---
+const rows = [
+  { tier: 'Residential', perGb: '$0.15', node: '$0.120', fee: '$0.030' },
+  { tier: 'Datacenter', perGb: '$0.03', node: '$0.024', fee: '$0.006' },
+];
+---
+
+<section id="pricing" class="alt">
+  <div class="wrap">
+    <h2>Simple, on-chain rates</h2>
+    <p class="section-sub">
+      Each settlement routes 80% to the node and a fixed 20% protocol fee. Rates are read from
+      contract storage and surfaced through the public pricing endpoint.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Node tier</th>
+          <th>Price / GB</th>
+          <th>Node (80%)</th>
+          <th>Protocol (20%)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr>
+            <td>{r.tier}</td>
+            <td class="num">{r.perGb}</td>
+            <td class="num">{r.node}</td>
+            <td class="num">{r.fee}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+</section>

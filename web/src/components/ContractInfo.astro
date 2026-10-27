@@ -1,0 +1,58 @@
+---
+const api = 'https://dmesh-coordinator.onrender.com';
+const ids = [
+  { label: 'Settlement contract', value: 'CCBNQXDZIOYBSFRSXBSNMCLANJG6H6EK4HFTO2A7EJR4BJD2HGM3YHOT' },
+  { label: 'XLM asset contract', value: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC' },
+];
+---
+
+<section id="contract" class="alt">
+  <div class="wrap">
+    <h2>Testnet deployment</h2>
+    <p class="section-sub">
+      The full lifecycle — allowance, session, settlement and fee split — runs against the public
+      Stellar testnet and is reproducible from the repository.
+    </p>
+    <div class="grid g2">
+      <div class="card">
+        <h3>Coordinator API</h3>
+        <span class="mono">{api}</span>
+        <p class="links">
+          <a href={`${api}/api/v1/health`} target="_blank" rel="noopener">health</a> ·
+          <a href={`${api}/api/v1/public/pricing`} target="_blank" rel="noopener">pricing</a> ·
+          <a href={`${api}/api/v1/public/stats`} target="_blank" rel="noopener">stats</a>
+        </p>
+      </div>
+      <div class="card">
+        <h3>On-chain identities</h3>
+        {ids.map((i) => (
+          <>
+            <div className="id-label">{i.label}</div>
+            <span className="mono">{i.value}</span>
+          </>
+        ))}
+        <p class="network">Network: Test SDF Network ; September 2015</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .id-label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-soft);
+    margin: 12px 0 6px;
+  }
+  .id-label:first-of-type {
+    margin-top: 0;
+  }
+  .links {
+    margin-top: 14px;
+  }
+  .network {
+    margin-top: 16px;
+    font-size: 13px;
+  }
+</style>
