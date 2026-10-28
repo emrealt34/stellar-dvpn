@@ -1,9 +1,11 @@
-# Handoff — dmesh session state (2026-10-28)
+# Handoff — dmesh session state (2026-10-29)
 
 Read this first when continuing in a new chat. Repo: `emrealt34/stellar-dvpn`.
 Live site (GitHub Pages): https://emrealt34.github.io/stellar-dvpn/ ·
 coordinator (Render): https://dmesh-coordinator.onrender.com ·
-branch `main`, remote is the source of truth.
+branch `main`, remote is the source of truth. HEAD: `c036675` (all CI green:
+backend, contract, pages, quality; only `geo-db-refresh` fails — no MaxMind
+secret yet).
 
 ## State of play
 
@@ -37,33 +39,42 @@ Two live testnet runs are green against v2 and saved under
 - `2026-10-28-lifecycle-v2.txt` — `TestTestnetSettlementFullLifecycle`:
   approve → open → propose → dual-sig confirm 80/20 → cancel, all pass.
 
-Live node re-registered after the sandbox rebuild:
+Live node registered (and re-registered after a Render redeploy wiped the
+ephemeral SQLite store):
 `GDPPX5FALV7VWWBU5HSERFJDIP62UJ5ILIFPEQWFBPZVASJPRQG7Q7JX` (TR, res, cone,
 hole-punch, client-signed), heartbeat loop running in-process; fresh
 screenshots in `docs/test-runs/screenshots/2026-10-28-*.png` (map shows the
-green residential marker over Türkiye; no console errors).
+green residential marker over Türkiye; no console errors). Note the
+heartbeat returns 404 "store: not found" when the node row is gone —
+re-register with the same seed to restore it.
 
 ## Outstanding work
 
-1. **Render env update (needs Hasan, dashboard only — no Render API token
-   exists here):** set `SETTLEMENT_CONTRACT_ID` to
+1. **Render env update (Hasan confirmed he will do it):** set
+   `SETTLEMENT_CONTRACT_ID` to
    `CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK` and redeploy.
-   Until then the coordinator still points at the old contract for any
-   on-chain read paths. Verify via `/api/v1/health` afterwards.
-2. Commit/push the hold test + doc/screenshot updates from this session,
-   then confirm Pages redeploy shows the v2 address in the Contract section.
-3. SCF (`docs/SCF_APPLICATION.md`): tx table and node numbers are filled
-   with real 2026-10-28 values; remaining brackets are the demo video link,
-   Hasan's background/prior-projects link, and a final count refresh right
-   before submission.
+   Verify via `/api/v1/health` afterwards.
+2. **Pushed:** commits `5de7725` (hold test + v2 address + evidence +
+   screenshots) and `c036675` (full SCF rewrite: paste-ready form answers,
+   5-phase roadmap, budget table, evidence). The live Pages site already
+   renders the v2 contract address.
+3. SCF remaining personal brackets only: contact email, LinkedIn URL,
+   1–2 background sentences, the demo video link, and a final count refresh
+   on submission day. Everything technical is filled with real artifacts.
 4. MaxMind: `geoip-latest` release needs `MAXMIND_LICENSE_KEY` repo secret +
    one manual `geo-db-refresh` dispatch (ask Hasan).
 5. Record the 3-minute demo video (nat-probe → register → tunnel-listen →
    agent request → on-chain settlement).
-6. Roadmap: community relay for symmetric/CGNAT nodes; UPnP/PCP + TCP
-   simultaneous open; allowance precheck before `opened`.
-7. **Rotate the GitHub PAT used earlier — it appeared in chat; gitleaks
-   confirms it is not stored in the repo.**
+6. Operational caveat: Render's free tier has an ephemeral disk, so every
+   redeploy wipes the SQLite node directory — the live node must be
+   re-registered after deploys (same keypair keeps the same mesh address).
+   A persistent disk or external Postgres is a Phase-1 item.
+7. Roadmap (detail in SCF Phase 1–4): agent SDK + reference scrapers,
+   allowance precheck, 10-node onboarding, UPnP/PCP + simultaneous open,
+   community relay tier, stablecoin SAC settlement, audit + legal → mainnet.
+8. **Rotate the GitHub PAT — it was pasted into chat again this session;
+   gitleaks confirms it is not stored in the repo and the remote URL never
+   persisted it, but rotate it now.**
 
 ## Environment gotchas (sandbox was rebuilt again mid-work)
 
