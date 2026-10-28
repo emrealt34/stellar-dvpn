@@ -1,0 +1,39 @@
+=== RUN   TestTestnetSpendHoldLifecycle
+    hold_live_test.go:46: client=GDX5WYVZKFCJ44GWD77XGZHYNVTVCVX64XG7MVAO4ONKSC2V45R4ENJH node=GCCTIJXAJDPWJXDTGX37SIBUNL4EOHM2ROKLVDRARA6WIKLZLV2V3KU7
+    hold_live_test.go:63: allowance approved tx=ab5082688d97b1b036a4956ee3ae3099c1fed421d675d21086053a96d05c7571
+    hold_live_test.go:70: contract escrow baseline 0 stroops
+    hold_live_test.go:79: hold session=3 open_tx=6a53e9583cec188277d61989dc02b2b87faff75676a278e3aba71eff66692b23 hold=50000000 stroops
+    hold_live_test.go:87: escrow lock verified: +50000000 stroops
+    hold_live_test.go:102: settlement from escrow confirm_tx=b0db99b6f0fd6be02dc81512ff2c336b8d57715a6b784e49932bfc315e06daa0
+    hold_live_test.go:119: escrow split verified from contract balances: node share 2384192 stroops; full hold released
+    hold_live_test.go:135: short hold session=4 open_tx=29f455c4856aff9162938dff213c7fc2b5be0fe30e0aa6ee8c3b033ff37cffa6 ttl=30s escrow +10000000
+    hold_live_test.go:141: early reclaim correctly refused
+    hold_live_test.go:152: reclaim not yet releasable: soroban: simulation failed: HostError: Error(Contract, #16)
+        
+        Event log (newest first):
+           0: [Diagnostic Event] contract:CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK, topics:[error, Error(Contract, #16)], data:"escalating error to VM trap from failed host function call: fail_with_error"
+           1: [Diagnostic Event] contract:CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK, topics:[error, Error(Contract, #16)], data:["failing with contract error", 16]
+           2: [Diagnostic Event] topics:[fn_call, CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK, reclaim_hold], data:4
+    hold_live_test.go:152: reclaim not yet releasable: soroban: simulation failed: HostError: Error(Contract, #16)
+        
+        Event log (newest first):
+           0: [Diagnostic Event] contract:CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK, topics:[error, Error(Contract, #16)], data:"escalating error to VM trap from failed host function call: fail_with_error"
+           1: [Diagnostic Event] contract:CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK, topics:[error, Error(Contract, #16)], data:["failing with contract error", 16]
+           2: [Diagnostic Event] topics:[fn_call, CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK, reclaim_hold], data:4
+    hold_live_test.go:152: reclaim not yet releasable: soroban: simulation failed: HostError: Error(Contract, #16)
+        
+        Event log (newest first):
+           0: [Diagnostic Event] contract:CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK, topics:[error, Error(Contract, #16)], data:"escalating error to VM trap from failed host function call: fail_with_error"
+           1: [Diagnostic Event] contract:CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK, topics:[error, Error(Contract, #16)], data:["failing with contract error", 16]
+           2: [Diagnostic Event] topics:[fn_call, CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK, reclaim_hold], data:4
+    hold_live_test.go:152: reclaim not yet releasable: soroban: simulation failed: HostError: Error(Contract, #16)
+        
+        Event log (newest first):
+           0: [Diagnostic Event] contract:CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK, topics:[error, Error(Contract, #16)], data:"escalating error to VM trap from failed host function call: fail_with_error"
+           1: [Diagnostic Event] contract:CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK, topics:[error, Error(Contract, #16)], data:["failing with contract error", 16]
+           2: [Diagnostic Event] topics:[fn_call, CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK, reclaim_hold], data:4
+    hold_live_test.go:162: expired hold reclaimed in full tx=ddecc30a034d6680bb6f8e00256fd878d1181f9f3e531d41f483606369f404da; escrow returned to baseline
+    hold_live_test.go:168: double reclaim correctly refused
+--- PASS: TestTestnetSpendHoldLifecycle (87.47s)
+PASS
+ok  	dmesh/internal/soroban	87.476s

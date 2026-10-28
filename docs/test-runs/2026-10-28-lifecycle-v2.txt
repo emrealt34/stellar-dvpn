@@ -1,0 +1,11 @@
+=== RUN   TestTestnetSettlementFullLifecycle
+    live_test.go:103: client=GATKY3MR52FRYHODHVDWNF3RS57UXERJSQ2455IGKAFWENIBT2FYMVWW node=GDDMHDKU3GX4C36V5TESPNG3YIGTMKZDXLULU2CJFFGPCTNJF4VQ7MKN admin=GATPSIQXSTWHXCWAKPRYZ2SGCXBNNVZQQPWUQP77MEJ3KN3UFLM5OTRO
+    live_test.go:145: allowance approved tx=a75315a3d3dd69b8bd993afe248985cba94d109b4cdac69820fc5d94d06d7858
+    live_test.go:156: session=5 open_tx=40132e30ae7184491d8afba2fbe4800665f9fb7867a0129724f5105e6103b6e1
+    live_test.go:166: propose_tx=b90da5ed76aa0e9cfc36da2e20695f6f6ea564f79f7de4b2f130b2447b3a2cad
+    live_test.go:171: confirm_tx=7d1352ebcee8b3ea672bc297c7ff56c03ea90037e78ad74a32feaadc12d8868e
+    live_test.go:193: split verified: node +11983939, admin +3000000, client -15004940 (stroops)
+    live_test.go:225: cancel_tx=2f8d5ebc10eb4745b5a16def2c44c0f656c65bc3385cbd98d687a4ab36371a9b
+--- PASS: TestTestnetSettlementFullLifecycle (56.62s)
+PASS
+ok  	dmesh/internal/soroban	56.627s

@@ -69,12 +69,18 @@ and [`/api/v1/nodes`](https://dmesh-coordinator.onrender.com/api/v1/nodes).
 | Network | Test SDF Network ; September 2015 |
 | RPC | `https://soroban-testnet.stellar.org` |
 | Horizon | `https://horizon-testnet.stellar.org` |
-| Settlement contract | `CCBNQXDZIOYBSFRSXBSNMCLANJG6H6EK4HFTO2A7EJR4BJD2HGM3YHOT` |
+| Settlement contract | `CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK` |
 | XLM asset contract | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
 
 The end-to-end lifecycle (allowance, capped spend hold, session, atomic split,
 replay rejection, cancellation with no transfer) is exercised against live
-testnet in `backend/internal/soroban/live_test.go`.
+testnet in `backend/internal/soroban/live_test.go`. The capped escrow path
+(`open_session_with_hold` → escrow split → automatic remainder refund → TTL
+reclaim, including early/double-reclaim rejection) is proven on this exact
+contract in `hold_live_test.go`; the latest captured run is in
+[`docs/test-runs/2026-10-28-spend-hold.txt`](docs/test-runs/2026-10-28-spend-hold.txt).
+The previous deployment without spend-hold support
+(`CCBNQXDZIOYBSFRSXBSNMCLANJG6H6EK4HFTO2A7EJR4BJD2HGM3YHOT`) is superseded.
 
 ### P2P data plane in three commands
 

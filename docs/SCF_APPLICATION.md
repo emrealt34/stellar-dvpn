@@ -55,21 +55,27 @@ Stellar makes the model practical:
   ([health](https://dmesh-coordinator.onrender.com/api/v1/health),
   [live directory](https://dmesh-coordinator.onrender.com/api/v1/nodes),
   [pricing](https://dmesh-coordinator.onrender.com/api/v1/public/pricing))
-- **Stellar testnet transactions:** [Settlement contract on Stellar Expert](https://expert.testnet.stellar.expert/contract/CCBNQXDZIOYBSFRSXBSNMCLANJG6H6EK4HFTO2A7EJR4BJD2HGM3YHOT)
-  — settlement `CCBNQXDZIOYBSFRSXBSNMCLANJG6H6EK4HFTO2A7EJR4BJD2HGM3YHOT`,
+- **Stellar testnet transactions:** [Settlement contract on Stellar Expert](https://expert.testnet.stellar.expert/contract/CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK)
+  — settlement `CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK`,
   XLM SAC `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC`
 - **Demo video:** [link to recording — 3 minutes: nat-probe → register →
   tunnel-listen → agent request through the P2P proxy → on-chain settlement]
 - **GitHub repository:** [https://github.com/emrealt34/stellar-dvpn](https://github.com/emrealt34/stellar-dvpn)
-- **Numbers (update at submission):** [N] registered test nodes, [N] countries,
-  [N] testnet sessions, [N] Soroban transactions, [X] KiB metered in the
-  reference end-to-end run (`docs/test-runs/2026-10-27-p2p-demo.txt`).
+- **Numbers at draft time (2026-10-28):** 1 live registered node in 1 country
+  (Türkiye, residential, cone NAT / hole-punch, heartbeat-monitored), 4 on-chain
+  hold-lifecycle transactions in the latest captured run plus the deployment
+  and configuration transactions, and a metered public-egress P2P run recorded
+  in `docs/test-runs/2026-10-27-p2p-demo.txt` (577-byte example.com fetch,
+  counters reported, port-25 exit refused). Refresh the counts immediately
+  before submitting.
 
 ### What is demonstrably working today
 
-- Full session lifecycle on testnet: coordinate → on-chain open (with optional
-  capped spend hold) → metered P2P traffic → dual-signature settlement with
-  the 80/20 node/protocol split → cancel/reclaim paths.
+- Full session lifecycle on testnet: coordinate → on-chain open with a capped
+  spend hold → metered P2P traffic → escrow settlement with the exact 80/20
+  node/protocol split and automatic remainder refund → TTL reclaim, with early
+  and double-reclaim rejected on chain (`hold_live_test.go`,
+  `docs/test-runs/2026-10-28-spend-hold.txt`).
 - A real P2P data plane: the coordinator carries zero user bytes; the node
   enforces an SSRF guard and a Tor-style exit policy (SMTP, SMB, NFS and other
   abuse ports blocked), validated against real public egress and a blocked-port
@@ -125,8 +131,8 @@ mitigates them by design and policy:
 ## Team
 
 - **Hasan Altinok** — design, Go backend and P2P data plane, Soroban contract,
-  Astro/React client and CI/CD. [GitHub profile link] [background / prior
-  projects link]
+  Astro/React client and CI/CD. GitHub: [github.com/emrealt34](https://github.com/emrealt34)
+  (background / prior projects link to be added).
 
 ## Appendix: quick verification
 
@@ -140,3 +146,24 @@ dmesh nat-probe
 # 3. live network state
 curl https://dmesh-coordinator.onrender.com/api/v1/nodes
 ```
+
+### Testnet evidence (2026-10-28)
+
+Settlement contract `CD3CYW3VGVCQBQUPLQTTWJPLYB6DNARFQBOSFLTK2B55XWLJDDVDBMMK`
+on the Test SDF Network; every hash below is independently viewable on any
+Stellar testnet explorer or via Horizon.
+
+| Transaction hash | Action |
+| --- | --- |
+| `f314e28893ebf3724dcabd9e9b728892c07f621c7dc6cbe3e9f5dd74ef0d27f3` | v2 contract deploy (spend-hold enabled) |
+| `6aee6f9033cc3ed8cd04d37461b6d78bb4249478b873b00a8374cba0b633a18a` | `initialize`, protocol fee 2000 bps |
+| `13cb1f64fdeeaeb34d4d51d0ee67c242da873c59f3901b4bdfc5dcc74d64f833` | `set_tier` residential 150000 micro-USD/GB |
+| `0add8de9f09c9872191c619621c53518e66c6487518ad5b730176d634e38680c` | `set_tier` datacenter 30000 micro-USD/GB |
+| `4e18582631200d5c6b9e7030022e78d5e7bce78bf9709b3c937363abed9822c0` | XLM `set_asset_price` 100000 micro-USD/token |
+| `6a53e9583cec188277d61989dc02b2b87faff75676a278e3aba71eff66692b23` | `open_session_with_hold`, 5 XLM escrow locked |
+| `b0db99b6f0fd6be02dc81512ff2c336b8d57715a6b784e49932bfc315e06daa0` | Escrow settlement, 200 MB, 80/20 split, 4.7 XLM auto-refund |
+| `29f455c4856aff9162938dff213c7fc2b5be0fe30e0aa6ee8c3b033ff37cffa6` | Short TTL hold, 1 XLM; early reclaim refused on chain |
+| `ddecc30a034d6680bb6f8e00256fd878d1181f9f3e531d41f483606369f404da` | TTL reclaim in full; subsequent double-reclaim refused |
+
+Full transcript with simulated rejection events and exact escrow deltas:
+[`docs/test-runs/2026-10-28-spend-hold.txt`](test-runs/2026-10-28-spend-hold.txt).
