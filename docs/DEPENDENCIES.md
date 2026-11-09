@@ -1,6 +1,6 @@
 # Dependency & vulnerability report
 
-_Generated 2026-11-02T15:10:05Z by `scripts/dependency-report.sh`. Direct dependencies only;
+_Generated 2026-11-09T15:41:05Z by `scripts/dependency-report.sh`. Direct dependencies only;
 transitive trees are pinned in the respective lock files._
 
 ## Go backend (`backend/`)
@@ -10,7 +10,7 @@ transitive trees are pinned in the respective lock files._
  |  github.com/golang-jwt/jwt/v5 | v5.3.1 | up to date |
  |  github.com/oschwald/geoip2-golang | v1.13.0 | up to date |
  |  github.com/stellar/go-stellar-sdk | v0.8.0 | up to date |
- |  modernc.org/sqlite | v1.61.0 | v1.61.1 |
+ |  modernc.org/sqlite | v1.61.0 | v1.62.0 |
 
 Vulnerability scan:
 ```
@@ -36,8 +36,8 @@ Use '-show verbose' for more details.
 
 | Package | Pinned | Latest |
 | --- | --- | --- |
-| @astrojs/react | 7.1.1 | 7.1.2 |
-| astro | 7.4.2 | 7.4.5 |
+| @astrojs/react | 7.1.1 | 7.1.5 |
+| astro | 7.4.2 | 7.4.8 |
 | react | 19.3.1 | up to date |
 | react-dom | 19.3.1 | up to date |
 
