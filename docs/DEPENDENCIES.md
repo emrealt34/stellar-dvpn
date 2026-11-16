@@ -1,6 +1,6 @@
 # Dependency & vulnerability report
 
-_Generated 2026-11-09T15:41:05Z by `scripts/dependency-report.sh`. Direct dependencies only;
+_Generated 2026-11-16T15:15:24Z by `scripts/dependency-report.sh`. Direct dependencies only;
 transitive trees are pinned in the respective lock files._
 
 ## Go backend (`backend/`)
@@ -9,7 +9,7 @@ transitive trees are pinned in the respective lock files._
 | --- | --- | --- |
  |  github.com/golang-jwt/jwt/v5 | v5.3.1 | up to date |
  |  github.com/oschwald/geoip2-golang | v1.13.0 | up to date |
- |  github.com/stellar/go-stellar-sdk | v0.8.0 | up to date |
+ |  github.com/stellar/go-stellar-sdk | v0.8.0 | v0.9.0 |
  |  modernc.org/sqlite | v1.61.0 | v1.62.0 |
 
 Vulnerability scan:
@@ -36,15 +36,27 @@ Use '-show verbose' for more details.
 
 | Package | Pinned | Latest |
 | --- | --- | --- |
-| @astrojs/react | 7.1.1 | 7.1.5 |
-| astro | 7.4.2 | 7.4.8 |
+| @astrojs/react | 7.1.1 | 7.1.9 |
+| astro | 7.4.2 | 7.4.12 |
 | react | 19.3.1 | up to date |
 | react-dom | 19.3.1 | up to date |
 
 Vulnerability scan (build toolchain advisories are noted separately; the deployed
 site is a static build that ships only the React runtime, not the dev server):
 ```
-found 0 vulnerabilities
+# npm audit report
+
+astro  <=7.4.6
+Severity: moderate
+Astro: XSS via attribute injection in dynamic tag names - https://github.com/advisories/GHSA-mh32-jxcr-mh9f
+Astro: Image endpoint in @astrojs/node can read files from a case-variant sibling of the output directory on case-sensitive filesystems - https://github.com/advisories/GHSA-r3h5-4585-7x3w
+fix available via `npm audit fix`
+node_modules/astro
+
+1 moderate severity vulnerability
+
+To address all issues, run:
+  npm audit fix
 ```
 
 ## Soroban contract (`contract/`)
